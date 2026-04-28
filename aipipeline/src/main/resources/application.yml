@@ -1,0 +1,59 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/apm_db
+    username: apm_user
+    password: apm_pass
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        options:
+          model: llama3.2:1b
+          num-predict: 500
+
+server:
+  port: 8083
+
+aipipeline:
+  scheduler:
+    interval-minutes: 1
+  threshold:
+    spike-multiplier: 3.0
+    slope-min-positive: 0.01
+    external-ratio-multiplier: 3.0
+    cpu-threshold: 80.0
+    memory-threshold: 80.0
+  window:
+    recent-minutes: 5
+    baseline-minutes: 30
+    erosion-minutes: 30
+  prompt:
+    # 자유 영역 — 표현과 강도 조절 가능
+    role: "당신은 APM 장애 분석 전문가입니다."
+    language: >
+      반드시 한국어로만 응답하세요.
+      일본어, 한자, 영어, 다른 언어는 절대 사용하지 마세요.
+      JSON 필드의 값도 반드시 한국어로만 작성하세요.
+    additional-instructions: >
+      반드시 아래 JSON 형식으로만 응답하세요.
+      설명이나 다른 텍스트는 절대 포함하지 마세요.
+      JSON 외의 텍스트가 포함되면 시스템이 오작동합니다.
+    # 고정 영역 — AiAnalysisResult 필드명/DB 계약과 연결, 값만 변경 가능
+    response-format: |
+      {
+        "pattern_type": 1,
+        "span_type": "INTERNAL",
+        "root_cause": "근본 원인 한 문장",
+        "ai_summary": "요약 한 문장",
+        "recommendation": "권고사항 한 문장",
+        "severity": "HIGH"
+      }
+    field-constraints: >
+      span_type은 반드시 INTERNAL, DB, EXTERNAL 중 하나만 선택하세요.
+      pattern_type은 반드시 정수(1=Collapse, 2=Erosion, 3=ExternalImpact)로 응답하세요.
+      severity는 반드시 HIGH, MEDIUM, LOW 중 하나만 선택하세요.

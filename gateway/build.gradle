@@ -1,0 +1,33 @@
+plugins {
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+shadowJar {
+    archiveBaseName.set('gateway')
+    archiveVersion.set('1.0.0')
+    archiveClassifier.set('')
+    manifest {
+        attributes 'Main-Class': 'com.apm.observatory.gateway.GatewayMain'
+    }
+}
+
+dependencies {
+    // Netty gRPC 서버
+    implementation 'io.grpc:grpc-netty-shaded:1.60.0'
+    implementation 'io.grpc:grpc-protobuf:1.60.0'
+    implementation 'io.grpc:grpc-stub:1.60.0'
+
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
+
+    // Redis (Lettuce)
+    implementation 'io.lettuce:lettuce-core:6.3.1.RELEASE'
+
+    // common 모듈
+    implementation project(':common')
+
+    // 로깅
+    implementation 'ch.qos.logback:logback-classic:1.4.14'
+
+    // 설정 파일 읽기
+    implementation 'org.yaml:snakeyaml:2.2'
+}

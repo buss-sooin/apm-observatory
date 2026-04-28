@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package monitoring;
+
+option java_package = "com.apm.common.proto";
+option java_outer_classname = "MonitoringProto";
+
+// Metrics 메시지
+message MetricsData {
+  string app_name = 1;
+  string host = 2;
+  string ip = 3;
+  int64 timestamp = 4;
+  double cpu_usage = 5;
+  int64 heap_used = 6;
+  int64 heap_max = 7;
+  int32 thread_count = 8;
+  int64 disk_used = 9;
+  int64 disk_total = 10;
+  int64 disk_read_bytes = 11;
+  int64 disk_write_bytes = 12;
+}
+
+// Span 메시지
+message SpanData {
+  string trace_id = 1;
+  string span_id = 2;
+  string parent_span_id = 3;
+  string app_name = 4;
+  string host = 5;
+  string span_type = 6;
+  int64 start_time = 7;
+  int64 end_time = 8;
+  int64 duration_ms = 9;
+  string http_method = 10;
+  string http_url = 11;
+  int32 http_status = 12;
+  string sql_query = 13;
+  string external_host = 14;
+  bool error = 15;
+  string error_message = 16;
+}
+
+// Log 메시지
+message LogData {
+  string app_name = 1;
+  string host = 2;
+  int64 timestamp = 3;
+  string level = 4;
+  string message = 5;
+  string trace_id = 6;
+  string thread_name = 7;
+  string stack_trace = 8;
+  bool error = 9;  // ERROR 레벨 이상이면 true — 빠른 필터링용 인덱스
+}
+
+// 게이트웨이 수신 서비스
+service MonitoringService {
+  rpc SendMetrics (MetricsBatch) returns (Response);
+  rpc SendSpan (SpanBatch) returns (Response);
+  rpc SendLog (LogBatch) returns (Response);
+}
+
+// 응답 메시지
+message Response {
+  bool success = 1;
+  string message = 2;
+}
+
+message MetricsBatch {
+  repeated MetricsData items = 1;
+}
+
+message SpanBatch {
+  repeated SpanData items = 1;
+}
+
+message LogBatch {
+  repeated LogData items = 1;
+}

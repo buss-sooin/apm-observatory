@@ -1,0 +1,202 @@
+version: '3.8'
+
+services:
+  # ===== 인프라 =====
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: apm-postgres
+    environment:
+      POSTGRES_DB: apm_db
+      POSTGRES_USER: apm_user
+      POSTGRES_PASSWORD: apm_pass
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apm_user -d apm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2
+    container_name: apm-redis
+    command: redis-server --appendonly yes
+    environment:
+      TZ: Asia/Seoul
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.0
+    container_name: apm-mysql
+    environment:
+      MYSQL_DATABASE: target_db
+      MYSQL_USER: target_user
+      MYSQL_PASSWORD: target_pass
+      MYSQL_ROOT_PASSWORD: root_pass
+      TZ: Asia/Seoul
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "target_user", "-ptarget_pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: apm-ollama
+    environment:
+      TZ: Asia/Seoul
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      # 의도: ollama 컨테이너 안에 curl 없음 → ollama 자체 CLI로 서버 상태 확인
+      test: [ "CMD", "ollama", "list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 의도: ollama 서버 준비 후 llama3.1:8b 모델 자동 pull
+  # 1회성 초기화 컨테이너 → 완료 후 종료
+  # aipipeline은 이 컨테이너 완료 후 시작
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: apm-ollama-init
+    # 의도: ollama 서버 준비 후 llama3.1:8b 모델 자동 pull
+    # 1회성 초기화 컨테이너 → 완료 후 종료
+    command: >-
+      sh -c "until curl -sf http://apm-ollama:11434; do echo 'ollama 대기중...'; sleep 3; done; curl -X POST http://apm-ollama:11434/api/pull -H 'Content-Type: application/json' -d '{\"name\": \"llama3.2:1b\"}'"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  # ===== 애플리케이션 =====
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway/Dockerfile
+    container_name: apm-gateway
+    environment:
+      TZ: Asia/Seoul
+      REDIS_HOST: apm-redis
+    ports:
+      - "9090:9090"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f gateway-1.0.0.jar || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  targetappmvc:
+    build:
+      context: .
+      dockerfile: docker/targetappmvc/Dockerfile
+    container_name: apm-targetappmvc
+    environment:
+      TZ: Asia/Seoul
+      SPRING_DATASOURCE_URL: jdbc:mysql://apm-mysql:3306/target_db
+      # 의도: agent가 gateway 컨테이너로 gRPC 전송
+      # 로컬 실행 시 localhost, Docker 환경에서는 서비스명
+      GATEWAY_HOST: apm-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  collectorserver:
+    build:
+      context: .
+      dockerfile: docker/collectorserver/Dockerfile
+    container_name: apm-collectorserver
+    environment:
+      TZ: Asia/Seoul
+      SPRING_DATASOURCE_URL: jdbc:postgresql://apm-postgres:5432/apm_db
+      SPRING_DATA_REDIS_HOST: apm-redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f collectorserver-1.0.0.jar || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  aipipeline:
+    build:
+      context: .
+      dockerfile: docker/aipipeline/Dockerfile
+    container_name: apm-aipipeline
+    environment:
+      TZ: Asia/Seoul
+      SPRING_DATASOURCE_URL: jdbc:postgresql://apm-postgres:5432/apm_db
+      SPRING_AI_OLLAMA_BASE_URL: http://apm-ollama:11434
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  apiserver:
+    build:
+      context: .
+      dockerfile: docker/apiserver/Dockerfile
+    container_name: apm-apiserver
+    environment:
+      TZ: Asia/Seoul
+      SPRING_DATASOURCE_URL: jdbc:postgresql://apm-postgres:5432/apm_db
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      collectorserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8084/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  mysql_data:

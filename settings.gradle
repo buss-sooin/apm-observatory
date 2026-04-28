@@ -1,0 +1,8 @@
+rootProject.name = 'apm-observatory'
+include 'common'
+include 'agent'
+include 'gateway'
+include 'collectorserver'
+include 'apiserver'
+include 'targetappmvc'
+include 'aipipeline'

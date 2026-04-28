@@ -1,0 +1,28 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+dependencies {
+    implementation 'net.bytebuddy:byte-buddy:1.14.10'
+    implementation 'net.bytebuddy:byte-buddy-agent:1.14.10'
+    implementation 'io.grpc:grpc-netty-shaded:1.60.0'
+    implementation 'io.grpc:grpc-protobuf:1.60.0'
+    implementation 'io.grpc:grpc-stub:1.60.0'
+    implementation project(':common')
+
+    compileOnly 'ch.qos.logback:logback-classic:1.4.14'
+}
+
+shadowJar {
+    mergeServiceFiles()  // META-INF/services 병합 — gRPC ServiceLoader 등록 보존
+    archiveClassifier.set('')
+    manifest {
+        attributes(
+                'Premain-Class': 'com.apm.observatory.agent.AgentMain',
+                'Agent-Class': 'com.apm.observatory.agent.AgentMain',
+                'Can-Redefine-Classes': 'true',
+                'Can-Retransform-Classes': 'true'
+        )
+    }
+}

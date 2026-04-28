@@ -1,0 +1,7 @@
+package com.apm.observatory.aipipeline.ai.repository;
+
+import com.apm.observatory.aipipeline.ai.entity.ErosionTrendSlopeEntity;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ErosionTrendSlopeRepository extends JpaRepository<ErosionTrendSlopeEntity, String> {
+}

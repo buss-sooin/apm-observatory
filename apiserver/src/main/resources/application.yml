@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/apm_db
+    username: apm_user
+    password: apm_pass
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  security:
+    user:
+      password: ignored  # Spring Security 자동 생성 비번 비활성화
+  jackson:
+    # 의도: @RequestBody JSON 역직렬화 시 snake_case → camelCase 자동 매핑
+    # 예: {"app_name": "targetappmvc"} → String appName 필드에 매핑
+    # @RequestParam은 이 설정과 무관 (별도로 @RequestParam("app_name") 명시 필요)
+    property-naming-strategy: SNAKE_CASE
+
+jwt:
+  secret: demo-jwt-secret-change-in-production
+  expiration: 86400000
+
+server:
+  port: 8084
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

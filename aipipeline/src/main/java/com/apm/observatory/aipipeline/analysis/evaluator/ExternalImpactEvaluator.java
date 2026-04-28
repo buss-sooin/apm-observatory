@@ -1,0 +1,84 @@
+package com.apm.observatory.aipipeline.analysis.evaluator;
+
+import com.apm.observatory.aipipeline.analysis.status.DetectionStatus;
+import com.apm.observatory.aipipeline.analysis.status.ResourceStatus;
+import com.apm.observatory.aipipeline.analysis.status.ResponseStatus;
+import com.apm.observatory.aipipeline.performance.port.ExternalImpactDataPort.ExternalSpanSnapshot;
+import com.apm.observatory.aipipeline.performance.port.ExternalImpactDataPort.MetricsSnapshot;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Slf4j
+@Component
+public class ExternalImpactEvaluator {
+
+    public ResourceStatus checkResourceStatus(List<MetricsSnapshot> recentMetrics,
+                                       double cpuThreshold,
+                                       double memoryThreshold) {
+        if (recentMetrics.isEmpty()) {
+            log.warn("자원 판단 스킵 - 수집된 Metrics 데이터 없음");
+            return ResourceStatus.NODATA;
+        }
+
+        double sumCpu = 0.0, sumMemoryRate = 0.0;
+        for (MetricsSnapshot m : recentMetrics) {
+            sumCpu += m.cpuUsage();
+            sumMemoryRate += (double) m.heapUsed() / m.heapMax() * 100.0;
+        }
+        double avgCpu = sumCpu / recentMetrics.size();
+        double avgMemoryRate = sumMemoryRate / recentMetrics.size();
+
+        log.debug("자원 판단 avgCpu={}, avgMemoryRate={}, cpuThreshold={}, memoryThreshold={}",
+                avgCpu, avgMemoryRate, cpuThreshold, memoryThreshold);
+
+        if (avgCpu > cpuThreshold || avgMemoryRate > memoryThreshold) {
+            return ResourceStatus.SPIKED;
+        }
+        return ResourceStatus.NORMAL;
+    }
+
+    public ResponseStatus checkExternalSpanStatus(List<ExternalSpanSnapshot> recentExternalSpans,
+                                           double baselineExternalAvg,
+                                           double externalRatioMultiplier) {
+        if (recentExternalSpans.isEmpty()) {
+            log.warn("외부 Span 판단 스킵 - 수집된 External Span 데이터 없음");
+            return ResponseStatus.NODATA;
+        }
+
+        double sumDuration = 0.0;
+        for (ExternalSpanSnapshot s : recentExternalSpans) {
+            sumDuration += s.durationMs();
+        }
+        double avgDuration = sumDuration / recentExternalSpans.size();
+
+        log.debug("외부 Span 판단 avgDuration={}ms, baseline={}ms", avgDuration, baselineExternalAvg);
+
+        if (avgDuration > baselineExternalAvg * externalRatioMultiplier) {
+            return ResponseStatus.SLOWED;
+        }
+        return ResponseStatus.NORMAL;
+    }
+
+    public DetectionStatus evaluate(ResourceStatus resourceStatus,
+                                    ResponseStatus responseStatus) {
+        if (resourceStatus == ResourceStatus.NODATA ||
+                responseStatus == ResponseStatus.NODATA) {
+            log.warn("판단 불가 - NODATA 상태 포함 resource={}, response={}",
+                    resourceStatus, responseStatus);
+            return DetectionStatus.UNDETERMINABLE;
+        }
+
+        DetectionStatus result = (resourceStatus == ResourceStatus.NORMAL &&
+                responseStatus == ResponseStatus.SLOWED)
+                ? DetectionStatus.DETECTED
+                : DetectionStatus.NOT_DETECTED;
+
+        log.info("ExternalImpact 판단 완료 resource={}, response={}, result={}",
+                resourceStatus, responseStatus, result);
+
+        return result;
+    }
+
+}
