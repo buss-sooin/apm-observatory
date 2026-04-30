@@ -1,6 +1,7 @@
 package com.apm.observatory.agent;
 
 import com.apm.observatory.agent.advice.mvc.AppenderRegistrationAdvice;
+import com.apm.observatory.agent.diagnostic.ClassLoaderDiagnostic;
 import com.apm.observatory.agent.advice.mvc.PreparedStatementAdvice;
 import com.apm.observatory.agent.advice.mvc.RestClientRequestAdvice;
 import com.apm.observatory.agent.sender.GrpcSenderImpl;
@@ -13,7 +14,6 @@ import net.bytebuddy.asm.Advice;
 import net.bytebuddy.utility.JavaModule;
 
 import java.lang.instrument.Instrumentation;
-import java.util.jar.JarFile;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
@@ -31,6 +31,9 @@ public class AgentMain {
     // 실패 시 에이전트 로그만 남기고 타겟 앱은 정상 실행을 보장한다.
     public static void premain(String agentArgs, Instrumentation inst) {
         System.out.println("[Agent] 시작");
+
+        // Instrumentation 저장 — ClassLoaderDiagnostic에서 사용
+        ClassLoaderDiagnostic.init(inst);
 
         // ===== 컴포넌트 조립 =====
 

@@ -13,18 +13,15 @@ import java.util.Map;
 
 import com.apm.observatory.agent.appender.GrpcLogbackAppender;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class AppenderRegistrationAdvice {
+
+    public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
     @Advice.OnMethodExit
     public static void onExit() {
-        // System 프로퍼티로 1회성 실행 보장
-        // 이유: static 필드(AtomicBoolean)는 agent ClassLoader 소속이라
-        //       인라인된 바이트코드가 Spring App ClassLoader 환경에서 실행될 때
-        //       NoClassDefFoundError 발생 → suppress가 삼킴 → 등록 누락
-        //       System 프로퍼티는 Bootstrap ClassLoader 소속 java.lang.System
-        //       → 어느 ClassLoader에서도 접근 가능
-        if (System.getProperty("apm.appender.registered") == null) {
-            System.setProperty("apm.appender.registered", "true");
+        if (appenderRegistered.compareAndSet(false, true)) {
             registerGrpcAppender();
         }
     }
@@ -117,7 +114,7 @@ public class AppenderRegistrationAdvice {
             appenderInterface.getMethod("start").invoke(proxy);
 
             // ── 6. ROOT Logger에 프록시 Appender 등록 ────────────────────
-            // proxy는 targetCl에서 생성됐으므로 Appender 타입 일치 ✅
+            // proxy는 targetCl에서 생성됐으므로 Appender 타입 일치
             // loggerContext는 1단계에서 이미 획득했으므로 재사용
             Class<?> loggerContextClass = targetCl
                     .loadClass("ch.qos.logback.classic.LoggerContext");
