@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.Map;
 
 import com.apm.observatory.agent.appender.GrpcLogbackAppender;
+import com.apm.observatory.agent.diagnostic.ClassLoaderDiagnostic;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -23,6 +24,16 @@ public class AppenderRegistrationAdvice {
     public static void onExit() {
         if (appenderRegistered.compareAndSet(false, true)) {
             registerGrpcAppender();
+
+            // ── ClassLoader 구조 진단 (테스트용) ─────────────────────────
+            // initServletBean 완료 시점 — Spring 초기화 후 실제 ClassLoader 구조 확인
+            // README 섹션 7 ClassLoader 문제 추적 과정과 연결되는 진단 출력
+            // 테스트 완료 후 아래 3개만 남길 것:
+            //   printHierarchy() / printAllThreadClassLoaders() / printClassLoaderInfo()
+            ClassLoaderDiagnostic.printAllClassLoaders();
+            ClassLoaderDiagnostic.printHierarchy();
+            ClassLoaderDiagnostic.printAllThreadClassLoaders();
+            ClassLoaderDiagnostic.printClassLoaderInfo();
         }
     }
 

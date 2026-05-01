@@ -13,10 +13,10 @@ APM을 처음 제대로 쓴 건 이전 직장에서였습니다. 명절마다 �
 - [1. 이 프로젝트에 대해](#1-이-프로젝트에-대해)
 - [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)
 - [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)
-- [4. 핵심 설계 결정들](#4-핵심-설계-결정들)
-- [5. 모듈 구조](#5-모듈-구조)
+- [4. 모듈별 설계 결정들](#4-모듈별-설계-결정들)
+- [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)
 - [6. 데이터 흐름과 코드 경로](#6-데이터-흐름과-코드-경로)
-- [7. 직접 부딪힌 문제들](#7-직접-부딪힌-문제들)
+- [7. 프로젝트 진행 중 어려웠던 문제들과 해결과정](#7-프로젝트-진행-중-어려웠던-문제들과-해결과정)
 - [8. 테스트 전략](#8-테스트-전략)
 - [9. 현실 조건에서의 타협](#9-현실-조건에서의-타협)
 - [10. AI와 함께 개발한 방식](#10-ai와-함께-개발한-방식)
@@ -68,7 +68,7 @@ Spring AOP는 Spring 컨텍스트 안에서만 동작해서 에이전트 용도�
 - Golang + gRPC
 - **Java + gRPC + Protobuf** ✓
 
-Golang은 언어 설계 자체가 경량 고루틴과 채널 기반 동시성을 내장하고 있어 네트워크 전송에 최적화되어 있고, gRPC 전송도 가능할 것으로 예상했습니다. 그러나 JVM 내부에서 클래스 로딩 시점에 개입해 바이트코드를 조작하려면 Java 에이전트여야 한다는 구조적 제약이 있었고, 새 언어 학습 부담과 Java 단에서 처리를 통일한다는 관점에서 Java를 선택했습니다. 전송은 에이전트가 타겟 앱과 같은 JVM에서 돌아가기 때문에 오버헤드가 낮은 Protobuf 바이너리 직렬화와 OpenTelemetry의 표준 전송 프로토콜인 [OTLP](https://opentelemetry.io/docs/specs/otlp/)가 지원하는 gRPC를 선택했습니다.
+Go는 언어 설계 자체가 경량 고루틴과 채널 기반 동시성을 내장하고 있어 네트워크 전송에 최적화되어 있고, gRPC 전송도 지원합니다. 다만 새 언어 학습 부담과 단일 언어로 통일하는 것이 구현하기에 적합한 난이도라고 봐서 Java를 선택했습니다. 전송은 에이전트가 타겟 앱과 같은 JVM에서 돌아가기 때문에 오버헤드가 낮은 Protobuf 바이너리 직렬화와 OpenTelemetry의 표준 전송 프로토콜인 [OTLP](https://opentelemetry.io/docs/specs/otlp/)가 지원하는 gRPC를 선택했습니다.
 
 ---
 
@@ -102,9 +102,9 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 **수집서버 처리 모델**
 - 전통적 스레드풀
 - Spring WebFlux
-- **Virtual Thread** ✓
+- **전통적 스레드풀 + 스케줄러** ✓
 
-전통적 스레드풀은 I/O 대기 중 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Virtual Thread는 I/O 대기 중 OS 스레드를 반납하기 때문에 기존 명령형 코드 스타일을 그대로 유지하면서 같은 효과를 얻을 수 있었습니다.
+전통적 스레드풀은 I/O 대기 중 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Redis Streams를 주기적으로 폴링하고 DB에 저장하는 단순한 흐름이라 Spring의 `@Scheduled` 스케줄러로 충분하다고 판단했습니다.
 
 ---
 
@@ -143,9 +143,79 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 
 ---
 
-## 4. 핵심 설계 결정들
+## 4. 모듈별 설계 결정들
 
-코드를 어떻게 작성했는가보다 왜 이 구조로 설계했는가에 대한 기록입니다.
+---
+
+**agent**
+
+에이전트 설계의 시작은 에이전트가 타겟 앱의 JVM 안에서 함께 실행된다는 사실이었습니다. 에이전트가 수집하는 모든 지점은 타겟 앱의 요청 처리 스레드 위에서 실행됩니다. 데이터 저장과 전송 과정의 성능 비효율이 요청 처리 스레드를 점유하거나 블로킹하면 그 지연이 타겟 앱으로 전파됩니다. 에이전트의 부하가 타겟 앱에 영향을 주어서는 안된다고 생각했습니다.
+
+에이전트의 역할은 크게 두 가지입니다. 관측 데이터를 수집하는 것과 수집한 데이터를 엔드포인트로 전송하는 것입니다. 수집은 Byte Buddy Advice가 담당하고, 전송 측의 효율적인 설계를 고민해야 했습니다. 가장 단순한 방법은 HTTP JSON 전송입니다. 구현이 쉽고 디버깅이 편하지만 APM 에이전트처럼 짧고 빈번한 데이터를 대량으로 전송하는 환경에서는 맞지 않다고 판단했습니다.
+
+```
+[HTTP JSON]                          [gRPC + Protobuf]
+요청마다 TCP 연결 수립                 HTTP/2 단일 연결 위에서 다중 스트림
+{"cpu":0.45,"heap":1024,...}         binary: 0x08 0x3d 0x10 0x80...
+텍스트 직렬화 → 파싱 비용              바이너리 직렬화 → 파싱 비용 낮음
+HTTP 헤더 오버헤드                    헤더 압축 (HPACK)
+```
+
+JSON 텍스트 직렬화 비용, HTTP 헤더 오버헤드, 요청마다 연결을 맺는 비용이 누적됩니다. gRPC + Protobuf는 바이너리 직렬화로 페이로드 크기가 작고 HTTP/2 기반으로 하나의 연결에서 다중 스트림을 처리합니다. 또한 gRPC는 OpenTelemetry의 표준 전송 프로토콜인 [OTLP](https://opentelemetry.io/docs/specs/otlp/)가 채택한 방식이기도 합니다.
+
+전송 방식을 정했다면 다음은 어떤 구조로 전송할 것인가였습니다. 수많은 에이전트가 동시에 데이터를 전송하는 상황을 가정하면 전송 구조가 타겟 앱 스레드에 미치는 영향이 커집니다. Java 플랫폼 스레드는 OS 스레드와 1:1로 매핑됩니다. 스레드가 네트워크 I/O를 기다리는 동안에도 블로킹 상태로 약 1MB의 스택 메모리를 점유하고, OS 스케줄러는 이 스레드를 블로킹 상태로 두고 다른 스레드로 전환하는 컨텍스트 스위칭 비용을 지불합니다. Tomcat의 기본 `maxThreads`는 200입니다. ([Apache Tomcat 공식 문서](https://tomcat.apache.org/tomcat-10.1-doc/config/http.html)) Advice에서 수집 즉시 전송하면 전송이 완료될 때까지 요청 처리 스레드가 gRPC 채널을 잡고 기다리게 됩니다. 전송 지연이 요청 처리 지연으로 전파되는 구조입니다.
+
+Go의 고루틴은 이 구조가 다릅니다. Go 런타임은 G(고루틴), M(OS 스레드), P(논리 프로세서) 세 가지로 구성됩니다. Go 코드는 G 위에서 실행되고, G는 P의 실행 큐에 들어가고, P는 실제 OS 스레드인 M에 붙어서 실행됩니다. OS 스레드를 사용하는 건 동일하지만 Go 런타임 스케줄러가 그 위에서 고루틴을 직접 스케줄링합니다. 고루틴이 블로킹 상태가 되면 P가 M에서 분리되고 다른 M에 붙어서 다른 고루틴을 계속 실행합니다. OS 스레드가 1~2MB를 소비하는 것과 달리 고루틴은 약 2KB에서 시작합니다. ([Go 공식 FAQ](https://go.dev/doc/faq#goroutines))
+
+```
+[Java 플랫폼 스레드]
+OS Thread-1 ── Request-1 (블로킹 중)
+OS Thread-2 ── Request-2 (블로킹 중)
+OS Thread-3 ── Request-3 (블로킹 중)
+...
+OS Thread-200 ── Request-200
+                 Request-201 ← 대기
+블로킹 중인 스레드는 다른 요청을 처리할 수 없음
+스레드당 스택 메모리 ~1MB / 최대 200개 한도
+
+[Go 고루틴 G/M/P]
+┌──────────────────────────────────┐
+│           Go Runtime             │
+│  ┌────────────┐ ┌────────────┐   │
+│  │     P-1    │ │     P-2    │   │
+│  │  G1 G2 G3  │ │  G4 G5 G6 │   │
+│  │     M-1    │ │     M-2    │   │
+│  └────────────┘ └────────────┘   │
+└──────────────────────────────────┘
+       │                 │
+  OS Thread-1       OS Thread-2
+G1 블로킹 시 → P-1이 즉시 G2 실행
+OS Thread-1는 블로킹되지 않음
+고루틴당 초기 스택 ~2KB / 수십만 동시 실행 가능
+```
+
+대규모 전송 환경에서는 Go 고루틴 방식이 구조적으로 유리합니다. 다만 별도 Go 프로세스로 분리하면 프로세스 간 통신 구현이 추가되고, 단일 언어로 통일하는 것이 구현하기에 적합한 난이도라고 봐서 Java를 선택했습니다.
+
+다음과 같이 구현했습니다. Java 에이전트 안에서 `QueueWorker`를 별도 데몬 스레드로 분리했습니다. `setDaemon(true)`로 설정하면 타겟 앱의 일반 스레드가 모두 종료될 때 JVM과 함께 종료됩니다. Advice는 `DataQueue`에 넣기만 하고 `QueueWorker`가 배치로 묶어 Netty 기반 gRPC 채널로 전송합니다. Netty는 비동기 이벤트 루프 기반이라 전송 중에 `QueueWorker` 스레드가 블로킹되지 않습니다. 이 규모에서는 단일 데몬 스레드로 충분하다고 판단했습니다.
+
+```
+[Tomcat Thread Pool]          [데몬 스레드 - QueueWorker]
+Request-1                     
+  └─ Advice                   drainTo() → 배치 조립
+       └─ DataQueue.offer()   → Netty gRPC 비동기 전송
+Request-2                          → gateway
+  └─ Advice                   
+       └─ DataQueue.offer()   
+Request-N                     
+  └─ Advice                   
+       └─ DataQueue.offer()   
+
+offer() 즉시 반환 — 블로킹 없음
+큐 꽉 찼을 시 드롭 — 타겟 앱 영향 없음
+```
+
+📎 [`agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java)
+📎 [`agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java)
 
 ---
 
@@ -222,7 +292,7 @@ AI는 이 감지 결과를 받아서 자연어로 원인을 설명하고 권고�
 
 ---
 
-## 5. 모듈 구조
+## 5. 전체 모듈 구조 요약
 
 ```
 apm-observatory/
@@ -441,7 +511,7 @@ GET /ai/results?app_name= → AiResultController → AiResultAdapter → DB
 
 ---
 
-## 7. 직접 부딪힌 문제들
+## 7. 프로젝트 진행 중 어려웠던 문제들과 해결과정
 
 Spring으로 API를 만드는 건 8년차로서 익숙한 영역입니다. 이 프로젝트에서 진짜 어려웠던 건 JVM을 사용하는 개발자가 아니라 다루는 개발자처럼 접근해야 했던 부분이었습니다.
 
@@ -457,18 +527,26 @@ ClassLoader 위임 모델 (Delegation Model) — 화살표 방향: 클래스를 
 
 ```mermaid
 graph BT
-    D["자식 — TomcatEmbeddedWebappClassLoader
-    getContextClassLoader() 반환값"]
+    E["자식 — TomcatEmbeddedWebappClassLoader
+    요청 처리 스레드의 getContextClassLoader() 반환값
+    실제 logback과 무관한 ClassLoader"]
+    D["자식 — ByteArrayClassLoader
+    Byte Buddy가 런타임에 생성하는 ClassLoader"]
     C["자식 — LaunchedClassLoader
-    targetapp이 로드한 logback, AppenderBase 등"]
+    targetapp이 로드한 logback, AppenderBase 등
+    loggerContext.getClass().getClassLoader()로 역추적한 ClassLoader"]
     B["자식 — App ClassLoader
     agent JAR — agent가 로드한 클래스들"]
+    P["자식 — PlatformClassLoader
+    Java SE 확장 API (java.sql, java.net 등)"]
     A["부모 — Bootstrap ClassLoader
     java.lang.System 등 JDK 기본 클래스"]
 
+    E -->|"부모 탐색"| C
     D -->|"부모 탐색"| C
     C -->|"부모 탐색"| B
-    B -->|"부모 탐색"| A
+    B -->|"부모 탐색"| P
+    P -->|"부모 탐색"| A
 ```
 
 ([Oracle Java 21 ClassLoader JavaDoc](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ClassLoader.html) — "Each instance of ClassLoader has an associated parent class loader" 단락)
@@ -654,6 +732,36 @@ if (appenderRegistered.compareAndSet(false, true)) {
 ```
 
 📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
+
+---
+
+**ClassLoaderDiagnostic**
+
+ClassLoader 문제를 디버깅하는 과정에서 JVM에 어떤 ClassLoader들이 올라와 있고 계층 구조가 어떻게 되는지를 직접 찍어볼 수단이 없었습니다. 출력 유틸리티를 직접 만들기로 했습니다.
+
+`Instrumentation` 객체는 `premain()`의 인자로만 받을 수 있어서 `AgentMain`에서 `ClassLoaderDiagnostic.init(inst)`로 먼저 전달해야 합니다. 이후 진단이 필요한 시점에 `public static` 메서드를 직접 호출합니다. 내부적으로는 데이터 조회와 출력 역할을 분리해서 출력 메서드만 외부에 노출했습니다.
+
+실제 출력 결과는 [11. 실행 방법](#11-실행-방법)의 시연 단계에서 확인할 수 있습니다.
+
+```
+===== [Diagnostic] ClassLoader 계층 구조 =====
+
+null (Bootstrap)
+└── PlatformClassLoader
+    └── AppClassLoader
+        ├── LaunchedClassLoader
+        ├── ByteArrayClassLoader
+        └── JavaDispatcher$DynamicClassLoader
+
+===== [Diagnostic] 현재 Thread[nio-8080-exec-1]의 ClassLoader 상세 정보 =====
+
+Name               : TomcatEmbeddedWebappClassLoader
+Parent             : LaunchedClassLoader
+SystemClassLoader  : AppClassLoader
+PlatformClassLoader: PlatformClassLoader
+```
+
+📎 [`agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java)
 
 ---
 
