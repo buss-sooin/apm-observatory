@@ -1,8 +1,6 @@
 package com.apm.observatory.gateway.interceptor;
 
 import com.apm.observatory.gateway.config.GatewayConfig;
-import io.grpc.Context;
-import io.grpc.Contexts;
 import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
@@ -50,7 +48,7 @@ public class ApiKeyAuthInterceptor implements ServerInterceptor {
         }
 
         // 인증 성공 → 다음 인터셉터 또는 서비스로 전달
-        return Contexts.interceptCall(Context.current(), call, headers, next);
+        return next.startCall(call, headers);
     }
 
 }
