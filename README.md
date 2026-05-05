@@ -147,7 +147,11 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 
 ---
 
-**agent**
+### 모듈별 설계
+
+---
+
+**[agent]**
 
 에이전트 설계의 시작은 에이전트가 타겟 앱의 JVM 안에서 함께 실행된다는 사실이었습니다. 에이전트가 수집하는 모든 지점은 타겟 앱의 요청 처리 스레드 위에서 실행됩니다. 데이터 저장과 전송 과정의 성능 비효율이 요청 처리 스레드를 점유하거나 블로킹하면 그 지연이 타겟 앱으로 전파됩니다. 에이전트의 부하가 타겟 앱에 영향을 주어서는 안된다고 생각했습니다.
 
@@ -219,7 +223,7 @@ offer() 즉시 반환 — 블로킹 없음
 
 ---
 
-**gateway**
+**[gateway]**
 
 에이전트가 게이트웨이 없이 수집서버에 직접 연결하는 구조도 가능합니다. 그러나 그 구조에서는 수집서버가 모든 에이전트 커넥션을 직접 받으면서 동시에 Redis 발행과 DB 저장까지 담당해야 합니다. 에이전트 수가 늘어날수록 수집서버가 커넥션 부하를 고스란히 받고, 수집서버 장애가 에이전트 연결 전체를 끊는 단일 장애 지점이 됩니다.
 
@@ -256,7 +260,7 @@ ApiKeyAuthInterceptor
 
 ---
 
-**Protobuf 파싱 경계 — 게이트웨이에서 끊기로 한 이유**
+**[gateway] Protobuf 파싱 경계 — 게이트웨이에서 끊기로 한 이유**
 
 처음 설계는 Protobuf 바이너리를 단순 Redis를 통해 수집서버까지 그대로 가져가는 방식이었습니다. 그런데 그렇게 하면 common 모듈과 gRPC 의존성이 수집서버까지 전파됩니다. 수집서버가 Redis에서 꺼낸 바이너리를 직접 역직렬화해야 하니 구현 복잡도가 올라가는 게 눈에 보였습니다.
 
@@ -279,6 +283,102 @@ agent ──→ gateway(역직렬화) ──→ Redis Streams(Map<String,String>
 모니터링은 수집한 데이터가 즉시 결과로 이어져야 합니다. 에이전트가 동시다발적으로 보내는 데이터를 빠르게 받는 것만큼, 게이트웨이가 Redis Streams로 발행하는 속도도 중요합니다. 발행이 블로킹되면 그만큼 데이터가 파이프라인에 늦게 진입하고 모니터링 결과도 늦어집니다. Netty 기반으로 하나의 커넥션을 여러 스레드가 공유할 수 있고 발행 응답을 기다리는 동안 스레드가 블로킹되지 않는 Lettuce 비동기 방식을 선택했습니다. ([Lettuce 공식 문서](https://redis.github.io/lettuce/user-guide/async-api/))
 
 📎 [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
+
+---
+
+**[collectorserver]**
+
+수집서버를 만들 때는 Metrics, Spans, Logs 3종의 raw data가 어떤 모습으로 저장되어야 하는지부터 떠올렸습니다. Metrics는 단일 지표로 원자화되는 형태이고, Spans는 한 요청 안에서 부모-자식 관계로 묶이는 계층 구조이며, Logs는 시간순으로 쌓이는 히스토리 성격입니다. 각 특성에 맞춰 테이블을 만들었습니다. 3종의 raw data를 각자 전용 스트림으로 수집해서 정해진 스키마 형태로 저장하는 것에만 집중하는 모듈로 설계했습니다.
+
+테이블 형태가 다르면 저장 로직도 별도의 형태로 나타납니다. 반면 Redis Streams를 빌려 데이터를 꺼내오는 부분은 종류와 무관하게 같은 흐름입니다. Redis를 빌린 수집 부분에서는 공통 코드를 뽑아내고, 저장 로직의 차이는 자바의 Template Method Pattern을 사용해 분리했습니다.
+
+---
+
+**[collectorserver] ACK 기반 재처리 — 저장 성공 후 ACK**
+
+모니터링은 관측의 영역입니다. 어느 시점에 무엇이 일어났는지 추적할 수 있어야 의미가 있고, 그러려면 시간 축 위에 끊김 없는 연속된 데이터가 남아있어야 합니다. 중간에 추적이 끊기면 그 시점의 자원 사용량, 호출 흐름, 로그가 함께 사라져 추적이 불가능해지기 때문에 유실이 없도록 해야 한다고 생각했습니다.
+
+Redis Streams는 새로운 메시지를 끝에 덧붙이기만 할 수 있는 로그 구조이며, 메시지 ACK와 Consumer Group을 기본으로 제공합니다([Redis 공식 — Streams](https://redis.io/docs/latest/develop/data-types/streams/)). Consumer Group이 메시지를 소비하면 PEL(Pending Entry List)에 기록되고, 처리한 결과를 ACK로 보내야 PEL에서 제거됩니다. 처리에 실패하면 ACK 없이 PEL에 남아 다음 폴링에서 다시 시도할 수 있습니다. 수집서버는 DB 저장까지 성공한 뒤에만 ACK를 보내도록 두어 유실 가능성을 차단했습니다.
+
+📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
+
+---
+
+**[collectorserver] SpanProcessor — TraceID 기준 30초 수집 대기**
+
+수집서버의 Metrics와 Logs는 들어온 raw data를 스키마에 맞춰 그대로 저장하면 되지만, Spans는 한 요청 안에서 여러 Span이 부모-자식 관계로 묶이는 계층 구조라 같은 TraceID끼리 모아 처리해야 될 것이라 생각했습니다.
+
+후킹 범위와 기준은 임의로 정했습니다. 실제 APM이 어떤 구조로 어떻게 흘러가는지 이해가 부족하지만, Span이 계층 구조를 표현할 수 있고 탐지 범위가 명확해지도록 나름의 도식을 잡아 세 지점을 정했습니다. DispatcherServlet을 ROOT로 두고, PreparedStatement는 DB, RestClient는 EXTERNAL로 분류했습니다. 이 세 지점만 후킹하면 한 요청에서 측정되는 건 전체 응답시간(ROOT)과 외부 호출 시간(DB, EXTERNAL)뿐이고, 비즈니스 로직 처리 시간은 어느 후킹에서도 잡히지 않습니다.
+
+측정되지 않은 시간을 그대로 두지 않고 INTERNAL이라는 이름으로 파생 계산해 채워넣기로 했습니다. 계산식은 단순합니다.
+
+```
+INTERNAL duration = ROOT duration - sum(DB) - sum(EXTERNAL)
+```
+
+이 계산이 성립하려면 같은 TraceID의 ROOT, DB, EXTERNAL Span이 모두 도착해야 합니다. 이 프로젝트의 에이전트는 Span이 종료되는 시점마다 게이트웨이로 전송하는 구조라, 같은 TraceID 묶음이 수집서버에 한 번에 도착하지 않습니다. TraceID별로 Span을 모아두는 버퍼(`TraceBuffer`)를 두고, 일정 시간이 지나면 그 시점까지 모인 Span으로 INTERNAL을 계산해 한꺼번에 저장하는 방식을 택했습니다. 전파되는 TraceID의 종료 시점을 어떻게 특정해야 할지는 명확히 알 수 없어 버퍼 수집 시간은 30초로 정했습니다.
+
+📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java)
+
+---
+
+**[aipipeline]**
+
+AI를 어떻게 쓸지 먼저 정했습니다. 이상을 감지하는 데 쓰는 게 아니라, 감지된 결과를 받아 권고를 생성하는 데 쓰기로 했습니다. 감지 방식 자체에는 모니터링 전용으로 설계된 모델, 수학적 시계열 모델, 데이터의 고유 패턴 인식 등 여러 길이 있었지만 모두 모델이나 알고리즘이 판단의 주체가 되는 방식이고, 개인 PC에서 돌리는 오픈소스 모델 규모로는 복합적인 근거를 유추해 결론을 내는 판단을 맡기기 어려웠습니다. 판단의 근거를 좁힐 수 있는 정제된 데이터를 주고 결론을 내게 하는 방식이 모델이 가장 안정적으로 답할 수 있는 형태였고, 그래서 감지는 코드가, 권고는 AI가 맡는 구조로 정했습니다.
+
+이상 감지 규칙은 일종의 도메인 로직이라 스트림으로 전달받은 데이터를 즉시 저장하는 수집서버의 역할과 책임에서 분리되는 게 맞다고 봤습니다. 모니터링이라는 분야를 깊게 다뤄본 경험이 없어 단정하긴 어렵지만, 관측 데이터를 빠르게 모아 저장하고 즉시 제공하는 흐름이 모니터링의 중심이라고 생각했고, 그 흐름에 부가 연산을 끼워 넣어 저장 경로를 늘이고 싶지 않았습니다. 또 모델 호출은 응답 시간과 안정성이 일반 코드와 다르게 흔들리는 구간이라 분리해두면 AI 쪽에서 문제가 생겨도 수집과 제공의 기본 흐름에 전파되지 않습니다. 이런 이유로 aipipeline을 별도 모듈로 설계했습니다. 권고 결과를 외부에 노출하는 API 호출은 apiserver가 담당합니다.
+
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
+
+---
+
+**[aipipeline] 룰 기반 이상 감지 — 두 축, 세 규칙**
+
+이상 감지 규칙은 APM 도구를 사용해본 경험에서 어떤 점을 주로 보려 했는가를 정리해 공통 패턴으로 추출했습니다. 두 축으로 갈라집니다. 변화의 속도(급격 vs 점진), 그리고 원인의 위치(앱 자원 내부 vs 외부 의존성). 이 축에서 세 가지 규칙이 나왔습니다.
+
+- **Collapse** — 자원과 응답시간이 동시에 급등하는 패턴 (급격 + 내부)
+- **Erosion** — 자원과 응답시간이 완만하게 같은 방향으로 상승하는 패턴 (점진 + 내부)
+- **External Impact** — 앱 자원은 정상인데 외부 API 응답시간만 평소 대비 크게 늘어난 패턴 (외부)
+
+각 규칙은 정해진 계산식을 가집니다. 이동 평균으로 노이즈를 제거하고 선형 회귀로 기울기를 계산하는 식이며, 상세는 [7. 직접 부딪힌 문제들](#7-직접-부딪힌-문제들)에 정리했습니다. 코드가 이 규칙으로 판단을 끝낸 뒤, AI는 그 결과와 근거 데이터를 받아 자연어 원인 설명과 권고를 생성합니다. 감지 결과의 신뢰는 규칙이, 설명의 품질은 AI가 책임집니다.
+
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java)
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java)
+
+---
+
+**[apiserver]**
+
+수집해서 저장한 데이터를 외부에서 조회하는 모듈입니다. 위젯이나 대시보드 UI 없이 JSON으로 응답하는 환경이라, 응답 형태가 데이터를 그대로 읽을 수 있을 만큼 명확해야 한다고 생각했습니다. Metrics와 Logs는 원형 그대로 노출하고, Spans는 한 요청 안의 여러 Span을 평면적으로 나열하면 호출 관계가 안 보이니 TraceID 기준으로 트리 구조로 조립하고 각 Span의 시작 오프셋(`offsetMs`)과 깊이(`depth`)를 함께 내려서 폭포수 형태로 읽힐 수 있게 했습니다.
+
+AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해 저장해둔 상태라, API는 그 중 AI 결과 본문만 조회해서 그대로 노출합니다. evidence를 같이 노출하려면 룰 계산을 재현하거나 근거 데이터를 모듈 간에 끌어오는 의존성이 필요한데, 그 의존성을 common 모듈에 얹기에는 부담이 컸습니다. 따라서 결과만을 보여주는 구성을 선택했습니다.
+
+제공하는 엔드포인트는 다음과 같습니다.
+
+| 엔드포인트 | 용도 |
+|---|---|
+| `GET /metrics/current` | 앱의 최신 자원 스냅샷 |
+| `GET /metrics/trend` | 시간 범위 내 자원 시계열 |
+| `GET /metrics/summary` | 구간 집계 + 기울기 + 임계값 대비 수준 |
+| `GET /spans/waterfall` | TraceID 기준 Span 트리 (offsetMs, depth 포함) |
+| `GET /logs/stream` | 시간 범위 내 로그 (level 필터 선택) |
+| `GET /ai/results` | AI 분석 결과 목록 |
+| `GET /ai/results/{id}` | AI 분석 결과 단건 |
+| `POST /auth/login` | JWT 발급 |
+| `POST /config/threshold` | 임계값 설정 (ADMIN) |
+| `POST/DELETE /config/business-cycle` | 비즈니스 사이클 설정/삭제 (ADMIN) |
+
+인증과 권한은 Spring Security와 JWT의 기본 구성을 그대로 따랐습니다. 로그인 시 JWT를 발급하고, 이후 요청은 Authorization 헤더로 검증하며, 설정 변경은 ADMIN 역할로 제한합니다. 외부 API 모듈에서 갖춰야 할 기본을 표준 방식으로 챙기는 정도이고, 별도의 결정이 들어간 자리는 아닙니다.
+
+📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java)
+📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java)
+📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/auth/`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/auth/)
+
+---
+
+### 공통 설계 결정
 
 ---
 
@@ -310,23 +410,6 @@ aipipeline의 이상 감지 평가 로직(PerformanceCollapseEvaluator, Performa
 
 ---
 
-**게이트웨이 레이어가 존재하는 이유**
-
-에이전트가 수집서버에 직접 연결하는 구조도 가능합니다. 그러나 그렇게 하면 수집서버가 인증, 유효성 검증, 커넥션 관리, 데이터 저장을 모두 담당해야 합니다. 에이전트 수가 늘어날수록 수집서버가 직접 모든 커넥션 부하를 받고, 잘못된 데이터가 들어오면 DB 저장 직전까지 전파됩니다.
-
-게이트웨이를 중간에 두면 역할이 분리됩니다. 인증과 유효성 검증은 입구에서 끝내고, 수집서버는 Redis에서 신뢰할 수 있는 데이터를 꺼내 저장하는 역할에만 집중합니다. Netty 기반 게이트웨이가 다수의 에이전트 커넥션을 받아내고 Redis로 넘기는 구조에서 수집서버는 커넥션 부하로부터 격리됩니다.
-
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java)
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java)
-
----
-
-**수집서버와 API 서버 분리**
-
-데이터를 수집하고 저장하는 역할과 저장된 데이터를 외부에 제공하는 역할을 별도 모듈로 분리했습니다. 하나로 합쳐도 동작하지만 수집서버는 Redis Streams를 소비하는 I/O 중심 작업이고 API 서버는 HTTP 요청을 처리하는 작업이라 부하 특성이 다릅니다. 실제 프로덕션이라면 각각 독립적으로 스케일링할 수 있어야 하고, 수집서버 장애가 API 서버에 전파되지 않아야 합니다.
-
----
-
 **AI 판단 근거 저장 — evidence 테이블과 ai_raw_responses**
 
 AI 분석 결과만 저장하면 "왜 이 결론이 나왔는가"를 나중에 추적할 수 없습니다. 두 가지를 추가로 설계했습니다.
@@ -337,19 +420,6 @@ AI 분석 결과만 저장하면 "왜 이 결론이 나왔는가"를 나중에 �
 
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java)
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java)
-
----
-
-**AI 파이프라인 설계 — 룰 기반 감지 + AI 설명 구조**
-
-AI 모델을 직접 학습시키거나 구축하는 건 제 영역 밖이었습니다. 대신 AI가 잘할 수 있는 것과 코드가 더 잘할 수 있는 것을 분리했습니다.
-
-이상 징후를 감지하는 건 코드가 합니다. Metrics와 Span 데이터를 주기적으로 읽어서 세 가지 패턴(자원과 응답시간 급등 동시 발생, 자원과 응답시간 완만한 동반 상승, 자원 정상인데 외부 API 응답 급등)을 룰 기반으로 판단합니다. 이동 평균으로 노이즈를 제거하고 선형 회귀로 기울기를 계산하는 방식입니다. 상세 알고리즘은 [7. 직접 부딪힌 문제들](#7-직접-부딪힌-문제들)에 정리했습니다.
-
-AI는 이 감지 결과를 받아서 자연어로 원인을 설명하고 권고를 생성합니다. 실제 APM 제품이 AI를 어떻게 활용하는지는 알지 못합니다. 다만 이 구조를 선택한 이유는 명확합니다. 정량적 판단을 AI에게 맡기면 모델 품질에 따라 감지 정확도가 흔들리지만, 룰이 판단하고 AI가 설명하는 구조에서는 감지 결과의 신뢰성은 룰이 보장하고 AI는 설명의 품질만 책임집니다.
-
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
 
 [▲ 목차로](#목차)
 
