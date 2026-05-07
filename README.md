@@ -1,13 +1,5 @@
 # apm-observatory
 
-APM을 처음 제대로 쓴 건 이전 직장에서였습니다. 명절마다 장애가 반복됐고, 원인은 항상 비슷했습니다. 문제가 있다는 걸 알고 있었지만 근거 없이는 아무것도 바꿀 수 없었습니다. APM이 그 근거를 만들어줬습니다. 쿼리 어디서 경합이 일어나는지, 어느 구간에서 응답이 밀리는지, 데이터로 보여줄 수 있었습니다.
-
-그 경험이 이 프로젝트의 시작입니다. 도구를 사용하는 것과 도구가 어떻게 동작하는지 이해하는 것은 다릅니다. 에이전트가 코드 한 줄 바꾸지 않고 어떻게 메서드 실행 시간을 측정하는지, Trace ID가 어떻게 요청을 가로질러 전파되는지 — 직접 만들어보면서 이해하고 싶었습니다.
-
-관심 있는 섹션부터 읽어도 됩니다. 각 섹션 하단 링크로 언제든 목차로 돌아올 수 있습니다.
-
----
-
 ## 목차
 
 - [1. 이 프로젝트에 대해](#1-이-프로젝트에-대해)
@@ -27,22 +19,34 @@ APM을 처음 제대로 쓴 건 이전 직장에서였습니다. 명절마다 �
 
 ## 1. 이 프로젝트에 대해
 
-APM 도구를 8년간 사용하면서도 그 내부가 어떻게 동작하는지는 알지 못했습니다. 코드 한 줄 바꾸지 않았는데 에이전트가 어떻게 메서드 실행 시간을 측정하는지, Trace ID가 어떻게 요청을 가로질러 전파되는지, 수집된 데이터가 어떤 경로를 거쳐 화면에 나타나는지.
+APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 내부가 어떻게 만들어져 있는지에 대한 궁금증은 늘 남아 있었습니다. 도구로 사용만 해왔을 뿐 내부를 알아본 적은 없었습니다. 메서드 실행 시간이 어떻게 측정되는지, 한 요청이 여러 시스템을 거치는 동안 어떻게 추적되는지, 수집한 데이터가 어떤 경로로 화면까지 흘러오는지.
 
 이 프로젝트는 그 내부를 직접 만들어보면서 이해하려는 시도입니다.
 
 **구현 범위**
 
-- 바이트코드 조작으로 타겟 애플리케이션 코드 변경 없이 Metrics / Traces / Logs 수집
-- gRPC + Netty 게이트웨이를 통한 데이터 전송 및 인증
-- Redis Streams 기반 버퍼링과 장애 복구
-- TimescaleDB 시계열 저장
-- 룰 기반 이상 감지 + AI를 통한 자연어 분석 및 권고
+- 바이트코드 조작으로 Metrics / Traces / Logs 수집
+- gRPC + Netty 기반 데이터 전송과 인증
+- Redis Streams 기반 버퍼링과 재처리
+- TimescaleDB 기반 시계열 저장
+- 룰 기반 이상 감지와 AI 자연어 분석/권고
 - Spring Security + JWT 기반 REST API
 
-**구현하지 않은 것과 이유**
+**기술 스택**
 
-실제 APM이라면 당연히 있어야 할 것들이지만 포트폴리오 범위에서 제외한 항목들은 [9. 현실 조건에서의 타협](#9-현실-조건에서의-타협)에 정리했습니다.
+| 카테고리 | 기술 |
+|---|---|
+| 언어/런타임 | Java 21 |
+| 프레임워크 | Spring Boot 3.5.13 |
+| 바이트코드 조작 | Byte Buddy 1.14.10 |
+| 통신 | gRPC 1.60.0, Protobuf 3.25.1, Netty (grpc-netty-shaded) |
+| 데이터 | TimescaleDB (PostgreSQL 15), Redis 7.2 Streams (Lettuce 6.3.1) |
+| 분석 | Apache Commons Math 3.6.1 (선형 회귀), Spring AI 1.0.5 + Ollama (llama3.2 1B 모델) |
+| 인증 | Spring Security + JWT |
+
+**빠른 둘러보기**
+
+빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 모양을, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 잡을 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [11. 실행 방법](#11-실행-방법)을 보면 됩니다.
 
 [▲ 목차로](#목차)
 
@@ -1198,10 +1202,10 @@ avg(heap) > baselineHeap × spikeMultiplier
 @Test
 @DisplayName("CPU가 평소 대비 3배 초과하면 SPIKED")
 void cpu_급등시_SPIKED() {
-    List<MetricsSnapshot> metrics = List.of(metricsSnapshot(60.0, 1000L, 8000L));
-    assertThat(evaluator.isResourceSpiked(metrics, 15.0, 500.0, SPIKE_MULTIPLIER))
-            .isEqualTo(ResourceStatus.SPIKED);
-}
+        List<MetricsSnapshot> metrics = List.of(metricsSnapshot(60.0, 1000L, 8000L));
+        assertThat(evaluator.isResourceSpiked(metrics, 15.0, 500.0, SPIKE_MULTIPLIER))
+        .isEqualTo(ResourceStatus.SPIKED);
+        }
 ```
 
 위 수식의 각 변수는 이 테스트 입력값과 다음과 같이 대응됩니다.
