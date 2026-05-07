@@ -260,7 +260,7 @@ ApiKeyAuthInterceptor
 
 ---
 
-**[gateway] Protobuf 파싱 경계 — 게이트웨이에서 끊기로 한 이유**
+**[gateway] Protobuf 파싱 경계**
 
 처음 설계는 Protobuf 바이너리를 단순 Redis를 통해 수집서버까지 그대로 가져가는 방식이었습니다. 그런데 그렇게 하면 common 모듈과 gRPC 의존성이 수집서버까지 전파됩니다. 수집서버가 Redis에서 꺼낸 바이너리를 직접 역직렬화해야 하니 구현 복잡도가 올라가는 게 눈에 보였습니다.
 
@@ -294,7 +294,7 @@ agent ──→ gateway(역직렬화) ──→ Redis Streams(Map<String,String>
 
 ---
 
-**[collectorserver] ACK 기반 재처리 — 저장 성공 후 ACK**
+**[collectorserver] ACK 기반 재처리**
 
 모니터링은 관측의 영역입니다. 어느 시점에 무엇이 일어났는지 추적할 수 있어야 의미가 있고, 그러려면 시간 축 위에 끊김 없는 연속된 데이터가 남아있어야 합니다. 중간에 추적이 끊기면 그 시점의 자원 사용량, 호출 흐름, 로그가 함께 사라져 추적이 불가능해지기 때문에 유실이 없도록 해야 한다고 생각했습니다.
 
@@ -304,7 +304,7 @@ Redis Streams는 새로운 메시지를 끝에 덧붙이기만 할 수 있는 �
 
 ---
 
-**[collectorserver] SpanProcessor — TraceID 기준 30초 수집 대기**
+**[collectorserver] SpanProcessor**
 
 수집서버의 Metrics와 Logs는 들어온 raw data를 스키마에 맞춰 그대로 저장하면 되지만, Spans는 한 요청 안에서 여러 Span이 부모-자식 관계로 묶이는 계층 구조라 같은 TraceID끼리 모아 처리해야 될 것이라 생각했습니다.
 
@@ -333,15 +333,192 @@ AI를 어떻게 쓸지 먼저 정했습니다. 이상을 감지하는 데 쓰는
 
 ---
 
-**[aipipeline] 룰 기반 이상 감지 — 두 축, 세 규칙**
+**[aipipeline] 룰 기반 이상 감지**
 
-이상 감지 규칙은 APM 도구를 사용해본 경험에서 어떤 점을 주로 보려 했는가를 정리해 공통 패턴으로 추출했습니다. 두 축으로 갈라집니다. 변화의 속도(급격 vs 점진), 그리고 원인의 위치(앱 자원 내부 vs 외부 의존성). 이 축에서 세 가지 규칙이 나왔습니다.
+이상 감지 규칙은 두 기준으로 구분했습니다. 원인의 위치(앱 자원 내부 vs 외부 의존성)와 변화의 속도(즉각 급등 vs 점진 상승). 이 두 기준의 조합으로 시스템 장애 상태를 세 가지 패턴으로 표현했습니다.
 
-- **Collapse** — 자원과 응답시간이 동시에 급등하는 패턴 (급격 + 내부)
-- **Erosion** — 자원과 응답시간이 완만하게 같은 방향으로 상승하는 패턴 (점진 + 내부)
-- **External Impact** — 앱 자원은 정상인데 외부 API 응답시간만 평소 대비 크게 늘어난 패턴 (외부)
+- **즉각적인 이상 신호 (Collapse)** — 자원과 응답시간이 동시에 급등하는 패턴
+- **점진적인 이상 신호 (Erosion)** — 자원과 응답시간이 완만하게 같은 방향으로 상승하는 패턴
+- **외부 영향의 이상 신호 (External Impact)** — 앱 자원은 정상인데 외부 API 응답시간만 평소 대비 늘어난 패턴
 
-각 규칙은 정해진 계산식을 가집니다. 이동 평균으로 노이즈를 제거하고 선형 회귀로 기울기를 계산하는 식이며, 상세는 [7. 직접 부딪힌 문제들](#7-직접-부딪힌-문제들)에 정리했습니다. 코드가 이 규칙으로 판단을 끝낸 뒤, AI는 그 결과와 근거 데이터를 받아 자연어 원인 설명과 권고를 생성합니다. 감지 결과의 신뢰는 규칙이, 설명의 품질은 AI가 책임집니다.
+---
+
+**규칙 도출의 구조**
+
+```
+이상 원인의 위치
+├─ 내부 (앱 자원)
+│   ├─ 자원 (cpu, heap)
+│   │    ├─ 즉각 급등   →  즉각적인 이상 신호 (Collapse)
+│   │    └─ 점진 상승   →  점진적인 이상 신호 (Erosion)
+│   └─ 응답시간 (전체 Span)
+│        ├─ 즉각 지연   →  즉각적인 이상 신호 (Collapse)
+│        └─ 점진 상승   →  점진적인 이상 신호 (Erosion)
+└─ 외부 (외부 의존성)
+    └─ 외부 응답시간 (EXTERNAL Span)
+         └─ 평소 대비 지연 → 외부 영향의 이상 신호 (External Impact)
+                            (내부 자원 정상 전제)
+```
+
+---
+
+**상태 표현**
+
+각 측정 요소의 결과를 정상/비정상 이분값으로 두면 표현할 수 있는 경우의 수가 부족합니다. 측정값이 임계 안에 머무르는 정상, 임계를 넘어선 이상, 데이터를 못 모아 판정이 성립하지 않는 상태는 서로 다른 의미를 갖고 이후 조합 단계에서도 분기가 달라야 합니다. 표현 단위를 enum으로 두어 각 측정 요소가 가질 수 있는 값을 명시했습니다.
+
+측정 영역별로 enum을 분리했습니다.
+
+- `ResourceStatus` — 자원 측정값(cpu, heap)의 즉각 상태를 분류
+- `ResponseStatus` — 응답시간 측정값(전체 Span 또는 외부 Span)의 즉각 상태를 분류
+- `TrendStatus` — 시계열 기울기 기반 추세 상태를 분류 (점진 상승 판정 전용)
+- `DetectionStatus` — 위 세 enum의 조합으로 도달하는 최종 이상 판정 결과
+
+```java
+enum ResourceStatus {
+    SPIKED,    // 측정값이 임계 초과 — 이상 상태
+    NORMAL,    // 측정값이 임계 이하 — 정상 상태
+    NODATA     // 측정 데이터 없음 — 판정 불가 상태
+}
+
+enum ResponseStatus {
+    SLOWED,    // 측정값이 임계 초과 — 지연 발생
+    NORMAL,    // 측정값이 임계 이하 — 정상 응답
+    NODATA     // 측정 데이터 없음 — 판정 불가 상태
+}
+
+enum TrendStatus {
+    RISING,    // 시계열 기울기가 양수 임계 초과 — 점진 상승 중
+    FLAT,      // 시계열 기울기가 양수 임계 이하 — 평탄
+    NODATA     // 데이터 포인트 부족 — 기울기 계산 불가
+}
+
+enum DetectionStatus {
+    DETECTED,        // 이상 조합 성립
+    NOT_DETECTED,    // 이상 조합 미성립
+    UNDETERMINABLE   // 조합 입력 중 NODATA 포함 — 판정 불가
+}
+```
+
+이상 신호는 위 enum 값들이 특정 조합으로 모일 때 성립합니다.
+
+```
+즉각적인 이상 신호 (Collapse)
+   ResourceStatus = SPIKED
+   ResponseStatus = SLOWED
+                      → DetectionStatus = DETECTED
+
+
+점진적인 이상 신호 (Erosion)
+   자원 TrendStatus  = RISING
+   응답 TrendStatus  = RISING
+                      → DetectionStatus = DETECTED
+
+
+외부 영향의 이상 신호 (External Impact)
+   ResourceStatus = NORMAL
+   ResponseStatus = SLOWED   (외부 응답시간만 측정)
+                      → DetectionStatus = DETECTED
+```
+
+---
+
+**장애 감지의 전체 구조**
+
+```
+이상 원인의 위치
+├─ 내부
+│   ├─ 자원 (cpu, heap) — ResourceStatus
+│   │    ├─ 즉각 급등           → SPIKED
+│   │    ├─ 즉각 급등 아님       → NORMAL
+│   │    └─ 측정 데이터 없음     → NODATA
+│   │
+│   ├─ 자원 추세 — TrendStatus
+│   │    ├─ 점진 상승           → RISING
+│   │    ├─ 평탄                → FLAT
+│   │    └─ 데이터 포인트 부족   → NODATA
+│   │
+│   ├─ 응답시간 (전체 Span) — ResponseStatus
+│   │    ├─ 즉각 지연           → SLOWED
+│   │    ├─ 즉각 지연 아님       → NORMAL
+│   │    └─ 측정 데이터 없음     → NODATA
+│   │
+│   └─ 응답시간 추세 — TrendStatus
+│        ├─ 점진 상승           → RISING
+│        ├─ 평탄                → FLAT
+│        └─ 데이터 포인트 부족   → NODATA
+│
+└─ 외부
+    ├─ 자원 (cpu, memoryRate) — ResourceStatus
+    │    ├─ 절대 임계 이하       → NORMAL
+    │    ├─ 절대 임계 초과       → SPIKED
+    │    └─ 측정 데이터 없음     → NODATA
+    │
+    └─ 외부 응답시간 (EXTERNAL Span) — ResponseStatus
+         ├─ 평소 대비 지연       → SLOWED
+         ├─ 평소 대비 평탄       → NORMAL
+         └─ 측정 데이터 없음     → NODATA
+
+조합 결과 → DetectionStatus
+   각 규칙의 이상 조합 성립          → DETECTED
+   각 규칙의 이상 조합 미성립        → NOT_DETECTED
+   조합 입력 중 NODATA 하나라도 포함 → UNDETERMINABLE
+```
+
+---
+
+<a id="status-formula"></a>
+**status 결정 수식**
+
+각 측정 요소의 enum 값은 정해진 수식으로 결정됩니다. 이동 평균으로 노이즈를 제거하고 평소 대비 임계 배수를 넘는지를 보는 식이 기본 구조이며, 점진 상승 판정만 시간 축 기울기를 추가로 봅니다. 수식에 등장하는 측정 구간과 기준 구간의 주기/길이는 [AI 분석 흐름의 구간 변수 단락](#interval-vars)에서 다룹니다.
+
+**자원 급등 (`ResourceStatus = SPIKED`, Collapse용)**
+```
+avg(cpu)  > baselineCpu  × spikeMultiplier
+avg(heap) > baselineHeap × spikeMultiplier
+```
+- `avg(cpu)` — 최근 측정 구간 동안 수집된 CPU 사용률(%)의 평균
+- `avg(heap)` — 최근 측정 구간 동안 수집된 heap 사용량(bytes)의 평균
+- `baselineCpu`, `baselineHeap` — 직전 기준 구간의 평균값
+- `spikeMultiplier` — 평소 대비 몇 배를 넘어야 SPIKED로 보는지의 임계 배수 (threshold_config 설정값, 기본 3.0)
+
+둘 중 하나라도 만족되면 SPIKED.
+
+**내부 응답 지연 (`ResponseStatus = SLOWED`, Collapse용)**
+```
+avg(spanDuration) > baselineSpan × spikeMultiplier
+```
+- `avg(spanDuration)` — 최근 측정 구간 동안 수집된 INTERNAL Span의 평균 응답시간(ms)
+- `baselineSpan` — 직전 기준 구간의 INTERNAL Span 평균 응답시간(ms)
+- `spikeMultiplier` — 자원 급등과 동일한 임계 배수
+
+**외부 응답 지연 (`ResponseStatus = SLOWED`, External Impact용)**
+```
+avg(externalDuration) > baselineExternal × externalRatioMultiplier
+```
+- `avg(externalDuration)` — 최근 측정 구간 동안 수집된 EXTERNAL Span의 평균 응답시간(ms)
+- `baselineExternal` — 직전 기준 구간의 EXTERNAL Span 평균 응답시간(ms)
+- `externalRatioMultiplier` — 외부 호출 지연 판정용 임계 배수 (자원/내부 응답과 다른 별도 설정값)
+
+**자원 정상 (`ResourceStatus = NORMAL`, External Impact용)** — 외부 영향 판정에서 자원 측은 평소 대비가 아니라 절대 임계 이하인지를 봅니다. 외부 의존성에서 오는 영향을 가리는 게 목적이므로 자원이 평소보다 낮든 평소 수준이든 임계 이하면 충분합니다.
+```
+avg(cpu)        ≤ cpuThreshold
+avg(memoryRate) ≤ memoryThreshold
+```
+- `avg(cpu)` — 위와 동일
+- `avg(memoryRate)` — 최근 측정 구간 동안 `heapUsed / heapMax × 100` 의 평균(%) — 절대값이 아닌 사용률
+- `cpuThreshold`, `memoryThreshold` — 자원이 정상 범위에 있는지를 가르는 절대 임계값 (threshold_config 설정값)
+
+**점진 상승 (`TrendStatus = RISING`)**
+```
+slope = SimpleRegression(시계열 데이터 포인트).getSlope()
+RISING ⇔ slope > slopeMinPositive
+```
+- `시계열 데이터 포인트` — 누적 윈도우 동안 일정 주기로 쌓인 측정값들
+- `SimpleRegression` — Apache Commons Math 라이브러리의 단순 선형 회귀 클래스
+- `slope` — 데이터 포인트들에 직선을 맞췄을 때의 기울기 (Y축 변화량 / X축 변화량). 데이터 포인트가 2개 미만이면 NaN
+- `slopeMinPositive` — "양수이면서 의미 있는 상승"이라고 보는 최소 기울기 임계값 (threshold_config 설정값)
+
+코드가 위 수식으로 측정 요소의 status를 결정하고, 그 status 조합으로 DetectionStatus를 확정한 뒤, AI는 그 결과와 근거 데이터를 받아 자연어 원인 설명과 권고를 생성합니다. 감지 결과의 신뢰는 규칙이, 설명의 품질은 AI가 책임집니다.
 
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java)
@@ -382,7 +559,7 @@ AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해
 
 ---
 
-**패키지 구조 — Package by Feature**
+**Package by Feature 패키지 구조**
 
 패키지를 레이어(controller, service, repository)로 나누는 방식이 익숙하지만 이 프로젝트에서는 기능(auth, metrics, span, log, config, ai) 단위로 나눴습니다. 레이어 기준으로 나누면 하나의 기능을 수정할 때 여러 패키지를 가로질러야 합니다. 기능 단위로 나누면 관련 코드가 한 곳에 모여 있어서 변경 범위를 파악하기 쉽습니다. 각 기능 안에서 필요한 레이어(controller, adapter, entity, repository, model)를 두는 방식으로 구성했습니다.
 
@@ -391,7 +568,7 @@ AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해
 
 ---
 
-**외부 경계 설계 — Port & Adapter**
+**Port & Adapter 외부 경계 설계**
 
 DB, Redis, 외부 API 같은 인프라와 도메인 로직 사이에 Port(인터페이스)와 Adapter(구현체)를 두었습니다. 도메인 로직이 JPA나 Redis 같은 기술 세부사항을 직접 알지 못하게 하기 위해서입니다. 단 모든 곳에 Port를 두지는 않았습니다. Entity에서 도메인 객체로 변환이 있거나 기술 교체 가능성이 있는 경우에만 Port + Adapter를 적용하고, 단순 조회/저장만 있는 경우는 Adapter만 두었습니다. 기준 없이 모든 곳에 인터페이스를 만드는 건 오히려 코드를 복잡하게 만든다고 판단했습니다.
 
@@ -400,17 +577,7 @@ DB, Redis, 외부 API 같은 인프라와 도메인 로직 사이에 Port(인터
 
 ---
 
-**TDD 적용 범위 결정**
-
-모든 코드에 테스트를 작성하지 않았습니다. TDD를 적용할 대상을 세 가지 기준으로 판단했습니다. 틀릴 가능성이 있는가, 그 틀림이 비즈니스에 영향을 주는가, 외부 시스템 없이 독립적으로 검증 가능한가. 세 가지 모두 해당할 때만 TDD 대상으로 봤습니다.
-
-aipipeline의 이상 감지 평가 로직(PerformanceCollapseEvaluator, PerformanceErosionEvaluator, ExternalImpactEvaluator)은 계산식이 있고 그 결과가 AI 파이프라인 전체 흐름을 결정하기 때문에 TDD를 적용했습니다. 반면 agent, gateway는 바이트코드 조작이나 네트워크 전송이 핵심이라 외부 환경 없이는 의미 있는 검증이 불가능해서 제외했습니다. JPA Repository나 Redis 연동처럼 외부 시스템에 직접 의존하는 코드도 테스트 비용 대비 효과가 낮아서 빌드와 실제 구동으로 검증하는 방식을 택했습니다.
-
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/)
-
----
-
-**AI 판단 근거 저장 — evidence 테이블과 ai_raw_responses**
+**AI 판단 근거 저장**
 
 AI 분석 결과만 저장하면 "왜 이 결론이 나왔는가"를 나중에 추적할 수 없습니다. 두 가지를 추가로 설계했습니다.
 
@@ -610,22 +777,83 @@ GET /logs/stream?app_name=&start_time=&end_time=&level= → LogController → Lo
 
 ### AI 분석 흐름
 
-`PerformanceMonitoringScheduler`가 1분 주기로 `PerformanceAnalysisPipelineContext`를 실행합니다. 파이프라인은 다음 순서로 진행됩니다.
+이 모듈의 분석 로직은 두 가지 주기로 동작합니다.
+
+**`PerformanceAnalysisPipelineContext`의 주기 구성**
+
+- **즉시 판정 주기** — 1분마다 한 번 돕니다. 즉각적인 이상 신호와 외부 영향의 이상 신호를 이 주기 안에서 판정합니다. 주기 내부에서 baseline을 매번 새로 산출하고 그 시점의 측정값과 비교합니다.
+- **누적 분석 주기** — 30분 동안 즉시 판정 주기가 매번 측정 결과를 적재해 시계열을 쌓고, 30분에 도달하면 그 시계열에 선형 회귀를 적용해 점진적인 이상 신호를 판정합니다. 분석이 끝나면 새 시계열로 교체.
+
+누적 분석 주기의 길이가 즉시 판정 주기의 간격보다 반드시 커야 한다는 제약은 시작 시점에 검증합니다 — `PerformanceContextManager.init()` 에서 `erosionMinutes ≤ intervalMinutes` 이면 `IllegalStateException`으로 부팅을 막습니다.
+
+**즉시 판정 주기의 파이프라인 단계**
+
+스케줄러가 1분마다 `PerformanceMonitoringScheduler.run()`을 호출하고, 그 안에서 등록된 앱마다 `PerformanceAnalysisPipelineContext`가 한 번 돕니다. 한 주기 동안 다음 단계를 거칩니다.
+
+```
+PerformanceMonitoringScheduler  (@Scheduled, 1분 주기)
+  ├─ Ollama 연결 확인 — 미연결 시 주기 스킵
+  └─ 등록된 앱마다 contextManager.process(appName)
+        │
+        ▼
+PerformanceAnalysisPipelineContext (Step Builder)
+  startWith()         앱 식별, 활성 PerformanceTrend 획득 (없으면 신규)
+  ─→ configure()      threshold_config 로드 (임계 배수, 절대 임계, 기울기 임계)
+  ─→ loadBaseline()   직전 기준 구간의 평균값 산출
+                      business_cycle 적용 시 전날 동시간대,
+                      미적용 시 직전 baseline-minutes 구간
+  ─→ loadSnapshot()   최근 측정 구간(recent-minutes)의 metrics·spans 수집
+  ─→ analyzeAnomalies()
+                      즉시 판정: CollapseDetectionStrategy, ExternalImpactDetectionStrategy
+                      판정 결과가 DETECTED면 OllamaAnalysisService 호출 → DB 저장
+  ─→ transferToTrend()
+                      누적 분석용 데이터 포인트를 활성 PerformanceTrend에 적재
+                      Trend가 erosion-minutes 도달 시 ErosionDetectionStrategy 평가
+                      평가 후 Trend 인스턴스 교체
+```
+
+각 단계는 입력만 주면 결과가 결정되도록 짜여 있어 단계 사이에 부수 효과가 누적되지 않습니다. AI 호출과 DB 저장은 `analyzeAnomalies()` 단계에서만 일어나며, 같은 단계가 여러 번 호출되는 일은 없습니다.
+
+<a id="interval-vars"></a>
+**구간 변수의 실제 길이**
+
+룰 기반 이상 감지 단락의 수식에 등장한 구간 변수들은 다음 설정을 사용합니다.
+
+| 수식 변수 | 설정 키 | 기본값 |
+|---|---|---|
+| 최근 측정 구간 | `aipipeline.window.recent-minutes` | 5분 |
+| 직전 기준 구간 | `aipipeline.window.baseline-minutes` | 30분 |
+| 누적 분석 주기 길이 | `aipipeline.window.erosion-minutes` | 30분 |
+| 즉시 판정 주기 간격 | `aipipeline.scheduler.interval-minutes` | 1분 |
+
+[↩ status 결정 수식으로 돌아가기](#status-formula)
+
+**baseline 산출 시점**
+
+`business_cycle`은 운영 중인 서비스의 피크 시간대(예: ecommerce의 점심·저녁 트래픽 집중 구간)를 기준 시간으로 정의해 baseline 시점을 결정하는 사용자 정의 기준입니다. 같은 임계 배수라도 어느 시점의 평균을 baseline으로 삼느냐에 따라 판정이 갈리기 때문에, 시간대별 트래픽 패턴이 뚜렷한 서비스에서 새벽 평균을 기준으로 삼아 발생하는 오탐을 막기 위해 둔 분기입니다.
+
+| `business_cycle` 등록 여부 | baseline 시점 | 사용 의도 |
+|---|---|---|
+| 등록됨 | 전날 같은 시각의 같은 길이 구간 | 시간대별 트래픽 패턴이 있는 서비스 — 같은 시간대끼리 비교 |
+| 미등록 | 현재로부터 직전 baseline-minutes 구간 | 시간대 영향이 작은 서비스 — 단순 직전 비교 |
+
+**호출부 정리**
 
 ```
 PerformanceMonitoringScheduler
   → PerformanceAnalysisPipelineContext
-      .startWith()        // 앱 목록 로드
-      .configure()        // 임계값 설정 로드 (ThresholdConfigAdapter)
-      .loadBaseline()     // 직전 30분 기준값 로드 (PerformanceDataAdapter)
-      .loadSnapshot()     // 최근 1분 스냅샷 로드
-      .analyzeAnomalies() // 룰 기반 이상 감지 (CollapseDetectionStrategy 등 3종)
-      .transferToTrend()  // 감지 결과 → PerformanceTrend 누적
-  → OllamaAnalysisService      // 감지된 패턴 → Ollama 자연어 분석 요청
+      .startWith()        // 앱 식별, 활성 Trend 획득
+      .configure()        // ThresholdConfigAdapter
+      .loadBaseline()     // PerformanceDataAdapter / ExternalImpactDataAdapter
+      .loadSnapshot()     // 같은 두 Adapter에서 최근 구간 수집
+      .analyzeAnomalies() // CollapseDetectionStrategy / ExternalImpactDetectionStrategy
+      .transferToTrend()  // PerformanceTrend 누적 → 만료 시 ErosionDetectionStrategy
+  → OllamaAnalysisService      // DETECTED → 자연어 분석 요청
   → AiAnalysisResultAdapter    // 분석 결과 + evidence 저장
 ```
 
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java)
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java)
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java)
 📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
@@ -690,7 +918,7 @@ graph BT
 
 ---
 
-**1 — logback.xml에 GrpcLogbackAppender 클래스명 직접 등록 (실패)**
+**1차 시도. logback.xml에 GrpcLogbackAppender 클래스명 직접 등록 (실패)**
 ```
 ClassNotFoundException: GrpcLogbackAppender not found
 // Spring Boot가 logback-spring.xml을 읽을 때 사용하는 LaunchedClassLoader의 탐색 범위 밖
@@ -699,7 +927,7 @@ Spring Boot가 `logback-spring.xml`을 읽을 때 `LaunchedClassLoader`를 사�
 
 ---
 
-**2 — agent JAR에 logback `implementation`으로 패키징 (실패)**
+**2차 시도. agent JAR에 logback `implementation`으로 패키징 (실패)**
 ```
 LoggerFactory is not a Logback LoggerContext
 // Spring Boot가 클래스패스에서 logback 구현체 두 개를 감지
@@ -708,7 +936,7 @@ Spring Boot가 클래스패스에서 logback 구현체가 두 개라고 감지�
 
 ---
 
-**3 — logback `compileOnly` + 첫 요청 시점 리플렉션 등록 (실패)**
+**3차 시도. logback `compileOnly` + 첫 요청 시점 리플렉션 등록 (실패)**
 ```
 ClassCastException
 // GrpcLogbackAppender(App ClassLoader)와 AppenderBase(LaunchedClassLoader)
@@ -718,7 +946,7 @@ ClassCastException
 
 ---
 
-**4 — `Advice` 안에 `AtomicBoolean` static 필드 참조 (실패)**
+**4차 시도. `Advice` 안에 `AtomicBoolean` static 필드 참조 (실패)**
 ```
 // suppress = Throwable.class 가 예외를 삼킴 → startTime = 0 → 1970-01-01 09:00:00
 ```
@@ -726,7 +954,7 @@ ClassCastException
 
 ---
 
-**5 — `Thread.currentThread().getContextClassLoader()`로 ClassLoader 탐색 (실패)**
+**5차 시도. `Thread.currentThread().getContextClassLoader()`로 ClassLoader 탐색 (실패)**
 ```
 ClassCastException
 // TomcatEmbeddedWebappClassLoader 반환
@@ -736,7 +964,7 @@ ClassCastException
 
 ---
 
-**6 — `LoggerFactory.getILoggerFactory().getClass().getClassLoader()`로 `LaunchedClassLoader` 역추적 + `ClassInjector.UsingReflection` 바이트코드 주입 + `Proxy.newProxyInstance` 프록시 생성 (성공)**
+**6차 시도. `LoggerFactory.getILoggerFactory().getClass().getClassLoader()`로 `LaunchedClassLoader` 역추적 + `ClassInjector.UsingReflection` 바이트코드 주입 + `Proxy.newProxyInstance` 프록시 생성 (성공)**
 ```
 [Agent] GrpcLogbackAppender ROOT Logger 등록 성공
 // redis-cli XLEN stream:logs → (integer) 17
@@ -802,7 +1030,7 @@ Byte Buddy `@Advice` 인라인 방식에서 `static` 필드 접근이 실패해�
 
 ---
 
-**1 — `start_time` 1970-01-01로 잘못 저장됨**
+**1차 시도. `start_time` 1970-01-01로 잘못 저장됨**
 ```sql
 SELECT start_time FROM spans WHERE span_type = 'INTERNAL' LIMIT 5;
 -- 1970-01-01 09:00:00
@@ -811,7 +1039,7 @@ SELECT start_time FROM spans WHERE span_type = 'INTERNAL' LIMIT 5;
 
 ---
 
-**2 — `AtomicBoolean` 이후 코드가 동작하지 않음 확인**
+**2차 시도. `AtomicBoolean` 이후 코드가 동작하지 않음 확인**
 ```java
 @Advice.OnMethodEnter(suppress = Throwable.class)
 public static long onEnter() {
@@ -825,7 +1053,7 @@ public static long onEnter() {
 
 ---
 
-**3 — `suppress` 제거 후 에러 메시지입니다**
+**3차 시도. `suppress` 제거 후 에러 메시지 확인**
 ```
 java.lang.IllegalAccessError: class org.springframework.web.servlet.DispatcherServlet
 tried to access private field com.apm.observatory.agent.advice.mvc.ServletAdvice.appenderRegistered
@@ -845,13 +1073,13 @@ private static AtomicBoolean appenderRegistered (App ClassLoader 소속)
 
 ---
 
-**4 — ClassLoader 문제 연장으로 오해 → `System.getProperty`로 우회**
+**4차 시도. `System.getProperty`로 우회**
 
 ClassLoader 문제를 해결하는 과정에서 발견했다보니 이 에러도 ClassLoader 경계 문제의 연장으로 받아들였습니다. Bootstrap ClassLoader 소속인 `java.lang.System`을 경유하는 방식으로 해결했습니다. `System.getProperty/setProperty`는 Bootstrap ClassLoader 소속 `public` 메서드라 `LaunchedClassLoader`든 `App ClassLoader`든 어디서든 접근할 수 있습니다.
 
 ---
 
-**5 — 접근 제어자 문제였음을 깨달음 → `public static AtomicBoolean`으로 개선 (해결)**
+**5차 시도. `public static AtomicBoolean`으로 개선 (해결)**
 
 나중에 다시 생각해보니 원인은 ClassLoader 경계가 아니라 `private` 접근 제어자였습니다. `public static`으로 바꾸는 것만으로 해결되고, `compareAndSet`의 원자적 연산으로 멀티 스레드 환경에서의 1회 실행 보장까지 되는 더 나은 해결책이었습니다. `System.getProperty/setProperty` 방식은 `get`과 `set`이 별개 연산이라 동시성을 고려하지 않은 자원값 변경으로 동시성 문제가 있을 수 있다고 판단했습니다.
 
@@ -924,7 +1152,100 @@ PlatformClassLoader: PlatformClassLoader
 
 ## 8. 테스트 전략
 
-*다음 채팅에서 작성 예정*
+모든 코드에 테스트를 작성하지 않았습니다. 테스트를 쓸지 말지를 코드 단위로 매번 다시 결정하지 않으려면 일관된 판단 기준이 필요했고, 세 가지 질문으로 좁혔습니다.
+
+- 이 코드가 틀릴 가능성이 있는가
+- 그 틀림이 비즈니스에 영향을 주는가
+- 외부 시스템 없이 독립적으로 검증 가능한가
+
+세 가지 모두에 해당할 때만 TDD 대상으로 봤습니다.
+
+aipipeline의 이상 감지 평가 로직(`PerformanceCollapseEvaluator`, `PerformanceErosionEvaluator`, `ExternalImpactEvaluator`)은 계산식이 있어 틀릴 가능성이 있고, 그 결과가 AI 분석 흐름 전체를 결정하며, 외부 시스템 없이 입력값만 주면 검증할 수 있습니다. 세 조건을 모두 만족해 TDD 대상으로 잡았습니다.
+
+agent와 gateway는 도메인 로직이 거의 없고 관측과 전송 책임만 담당하는 구조라 외부 모듈과의 통합 동작이 곧 검증 대상이 됩니다. 빌드와 실제 구동으로 검증하는 쪽이 맞다고 봤습니다.
+
+JPA Repository, Redis 발행, 외부 API 호출 같은 외부 의존 코드는 두 가지 길로 검증할 수 있습니다. 실제 라이브러리를 그대로 띄우면 빌드와 실제 구동 검증과 다르지 않아서 별도의 단위 테스트로 둘 이유가 줄어듭니다. Mock으로 대체하는 방식은 도메인 로직 검증에서는 유효한 도구이지만, 외부 시스템과의 결합 자체는 어느 쪽으로도 단위 테스트만으로는 검증되지 않습니다. 이 영역은 빌드와 실제 구동으로 검증하기로 했습니다.
+
+---
+
+**테스트가 검증하는 것은 무엇인가**
+
+테스트 코드는 구현이 바뀌면 같이 바뀌는 거울이 아니라 그 메서드가 어떤 비즈니스 행위를 해야 하는가를 적은 명세에 가까워야 한다고 봤습니다. JUnit의 `@DisplayName`을 비즈니스 시나리오 문장으로 적고, 메서드명도 `cpu_급등시_SPIKED`처럼 조건과 기대 결과를 그대로 쓰는 방식을 택했습니다. 클래스 레벨 `@DisplayName`은 그 평가기 자체가 무엇을 판정하는지를 한 문장으로 요약합니다.
+
+```java
+@DisplayName("자원 급등과 응답 지연이 동시 발생했을 때만 PerformanceCollapse로 판정한다")
+class PerformanceCollapseEvaluatorTest { ... }
+```
+
+📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java)
+
+---
+
+**예시**
+
+즉각적인 이상 신호의 자원 판단 메서드 `isResourceSpiked`를 예로 듭니다. 이 메서드는 룰 기반 이상 감지 단락의 자원 급등 수식을 그대로 옮긴 것이며, 입력만 주면 결과가 결정되는 순수 함수라 단위 테스트로 검증하기에 적합합니다.
+
+룰 기반 이상 감지 단락에서 정의한 자원 급등 수식은 다음과 같습니다.
+
+```
+avg(cpu)  > baselineCpu  × spikeMultiplier
+avg(heap) > baselineHeap × spikeMultiplier
+```
+
+자원 판단의 핵심 테스트 시나리오는 다음과 같이 적었습니다.
+
+```java
+@Test
+@DisplayName("CPU가 평소 대비 3배 초과하면 SPIKED")
+void cpu_급등시_SPIKED() {
+    List<MetricsSnapshot> metrics = List.of(metricsSnapshot(60.0, 1000L, 8000L));
+    assertThat(evaluator.isResourceSpiked(metrics, 15.0, 500.0, SPIKE_MULTIPLIER))
+            .isEqualTo(ResourceStatus.SPIKED);
+}
+```
+
+위 수식의 각 변수는 이 테스트 입력값과 다음과 같이 대응됩니다.
+
+```
+수식 변수            테스트 입력값                       대입 결과
+─────────────────────────────────────────────────────────────────
+avg(cpu)             metricsSnapshot(60.0, ...)  →  60.0
+baselineCpu          isResourceSpiked의 두 번째   →  15.0
+spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
+
+  60.0 > 15.0 × 3.0 = 45.0  →  SPIKED 분기 만족
+```
+
+`@DisplayName`이 시나리오를, 메서드명이 조건과 결과를 그대로 담고 있어 코드만 봐도 무엇을 검증하는 테스트인지 잡힙니다. NORMAL과 NODATA 케이스도 같은 결로, heap 분기 케이스도 같은 결로 작성했습니다.
+
+---
+
+**Red → Green → Refactor**
+
+`isResourceSpiked` 메서드는 다음 절차로 작성했습니다.
+
+- **Red.** 메서드 본문은 `UnsupportedOperationException`으로 두고 SPIKED, NORMAL, NODATA 테스트를 먼저 작성해 모두 실패시킴.
+- **Green.** CPU 케이스부터 가장 단순하게 통과시키고, Heap 케이스 테스트를 추가하면서 Red → Green을 반복.
+- **Refactor.** CPU와 Heap을 따로 순회하던 평균 계산을 단일 순회 안에서 두 합계를 동시에 누적하는 형태로 정리. 테스트 재실행으로 동일 통과 확인.
+
+이 절차는 메서드 단위로 닫혀 있고, `isSpanSlowed`와 `evaluate`도 같은 흐름으로 작성했습니다.
+
+📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
+
+---
+
+**같은 절차를 적용한 다른 클래스**
+
+- `PerformanceErosionEvaluator` — 이동 평균과 선형 회귀 기울기로 점진적 상승을 판정. 8개 테스트.
+- `ExternalImpactEvaluator` — 앱 자원이 정상인 상태에서 외부 호출만 평소 대비 늘어난 패턴을 판정. 10개 테스트.
+- `PerformanceTrend.isExpired()` — 30분 누적 윈도우의 만료 시점 판정. 3개 테스트.
+
+이 외에 `PromptBuildStrategy` 계열은 도구성 클래스(AI 프롬프트 빌더)로 분류해 같은 방식으로 테스트를 작성했습니다. 프롬프트 텍스트의 품질이 그대로 AI 응답 품질을 결정하기 때문에 입력 → 텍스트 결과를 명세로 두는 게 맞다고 봤습니다.
+
+📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java)
+📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java)
+📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java)
+📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java)
 
 [▲ 목차로](#목차)
 
