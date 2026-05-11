@@ -950,15 +950,7 @@ ClassCastException
 
 ---
 
-**4차 시도. `Advice` 안에 `AtomicBoolean` static 필드 참조 (실패)**
-```
-// suppress = Throwable.class 가 예외를 삼킴 → startTime = 0 → 1970-01-01 09:00:00
-```
-→ [start_time이 전부 1970-01-01로 저장된 문제](#start_time%EC%9D%B4-%EC%A0%84%EB%B6%80-1970-01-01%EB%A1%9C-%EC%A0%80%EC%9E%A5%EB%90%9C-%EB%AC%B8%EC%A0%9C)로 연결됨.
-
----
-
-**5차 시도. `Thread.currentThread().getContextClassLoader()`로 ClassLoader 탐색 (실패)**
+**4차 시도. `Thread.currentThread().getContextClassLoader()`로 ClassLoader 탐색 (실패)**
 ```
 ClassCastException
 // TomcatEmbeddedWebappClassLoader 반환
@@ -968,7 +960,7 @@ ClassCastException
 
 ---
 
-**6차 시도. `LoggerFactory.getILoggerFactory().getClass().getClassLoader()`로 `LaunchedClassLoader` 역추적 + `ClassInjector.UsingReflection` 바이트코드 주입 + `Proxy.newProxyInstance` 프록시 생성 (성공)**
+**5차 시도. `LoggerFactory.getILoggerFactory().getClass().getClassLoader()`로 `LaunchedClassLoader` 역추적 + `ClassInjector.UsingReflection` 바이트코드 주입 + `Proxy.newProxyInstance` 프록시 생성 (성공)**
 ```
 [Agent] GrpcLogbackAppender ROOT Logger 등록 성공
 // redis-cli XLEN stream:logs → (integer) 17
@@ -1028,9 +1020,25 @@ logback이 `proxy.doAppend(event)`를 호출하면 `InvocationHandler`가 받아
 
 **start_time이 전부 1970-01-01로 저장된 문제**
 
-[GrpcLogbackAppender와 ClassLoader](#grpclogbackappender%EC%99%80-classloader) 섹션에서 이어지는 문제 해결 과정입니다.
+Byte Buddy `@Advice`는 표시한 메서드를 별개로 호출하지 않고, 후킹 대상 클래스(예: `DispatcherServlet.doDispatch`)의 바이트코드에 본문을 runtime에 그대로 심는 인라인 방식으로 동작합니다. 인라인된 코드 안에서 발생한 예외는 `suppress = Throwable.class` 옵션으로 자동 삽입되는 try-catch에 의해 호출자에게 전파되지 않고 메서드는 정상 종료된 것처럼 보입니다. ([Byte Buddy `Advice.OnMethodEnter` JavaDoc](https://javadoc.io/doc/net.bytebuddy/byte-buddy/latest/net/bytebuddy/asm/Advice.OnMethodEnter.html))
 
-Byte Buddy `@Advice` 인라인 방식에서 `static` 필드 접근이 실패해도 `suppress = Throwable.class`로 `Error`가 억제되어 원인을 바로 알 수 없었습니다. `1970-01-01`만 봤을 땐 타임존 변환이 잘못됐다고 생각했습니다.
+`ServletAdvice`는 초기 구현 단계에서 Span 수집과 Log appender 등록 두 기능이 한 파일 안에 들어 있었고, 이때 `start_time`이 모두 `1970-01-01`로 저장됐습니다. 이후 Log appender의 후킹 지점을 분리하는 리팩토링을 거치면서 새 advice(`AppenderRegistrationAdvice`)에서 같은 문제가 다시 드러났습니다.
+
+**삽입된 인라인 바이트코드의 문제 되는 부분** (`DispatcherServlet.doDispatch`)
+```
+ 0: getstatic     ServletAdvice.appenderRegistered    // private static AtomicBoolean
+ 5: invokevirtual AtomicBoolean.compareAndSet         // ← 여기서 IllegalAccessError 발생
+ 8: ifeq          14
+11: invokestatic  ServletAdvice.registerGrpcAppender
+14: invokestatic  UUID.randomUUID                     // 정상이면 이후 코드 실행
+...
+44: invokestatic  System.currentTimeMillis            // long 반환
+47: goto          52                                  // 정상이면 catch 건너뜀
+50: pop                                               // 예외 잡고 버림
+51: lconst_0                                          // long 0을 스택에 push
+52: lstore_3                                          // startTime ← 0 (예외 시) 또는 정상값
+```
+> Byte Buddy의 덤프 옵션(`-Dnet.bytebuddy.dump`)으로 변환된 클래스를 디스크에 저장한 뒤 javap으로 디스어셈블한 결과.
 
 ---
 
@@ -1043,57 +1051,62 @@ SELECT start_time FROM spans WHERE span_type = 'INTERNAL' LIMIT 5;
 
 ---
 
-**2차 시도. `AtomicBoolean` 이후 코드가 동작하지 않음 확인**
-```java
-@Advice.OnMethodEnter(suppress = Throwable.class)
-public static long onEnter() {
-        System.err.println("1 - onEnter 진입");           // 출력됨
-        appenderRegistered.compareAndSet(false, true);     // 여기서 멈춤
-        System.err.println("2 - compareAndSet 완료");     // 출력 안됨
-        return System.currentTimeMillis();                 // 실행 안됨 → 0 반환
-        }
-```
-`System.err.println`은 출력됐지만 `AtomicBoolean.compareAndSet()` 직후부터 아무것도 찍히지 않았습니다. `System.currentTimeMillis()`가 실행되지 않아 `onEnter()`가 `long` 기본값 0을 반환했고, `startTime = 0` → epoch 0 → `1970-01-01 09:00:00 (KST)`로 저장됐습니다.
+**2차 시도. `currentTimeMillis()`가 실행되지 않고 0이 반환됨**
+
+`onEnter()`가 0을 반환한다는 건 마지막 줄 `return System.currentTimeMillis()`가 실행되지 않았다는 뜻이었습니다. 그런데 코드상 `currentTimeMillis()` 외에 0을 반환할 자리가 없었습니다.
+
+`long` 변수 반환 직전까지의 코드 줄을 하나씩 제거하며 테스트한 결과, `private static AtomicBoolean appenderRegistered` 선언과 `compareAndSet`을 실행하는 if 문을 함께 제거했을 때 DB에 날짜가 정상 저장됐습니다.
+
+이후 `long` 형 반환값이 0으로 치환되는 자리를 찾기 위해 Byte Buddy 변환 결과를 디스크에 덤프해 javap으로 확인했더니, 도입부의 바이트코드 블록에 보이는 `getstatic`(offset 0~5)에서 `IllegalAccessError`가 발생하고, `suppress` 옵션에 의해 자동 삽입된 catch 블록(offset 50~52)이 `pop` + `lconst_0`으로 `long` 0을 반환값 자리에 채우는 구조였습니다.
 
 ---
 
-**3차 시도. `suppress` 제거 후 에러 메시지 확인**
-```
-java.lang.IllegalAccessError: class org.springframework.web.servlet.DispatcherServlet
-tried to access private field com.apm.observatory.agent.advice.mvc.ServletAdvice.appenderRegistered
-(DispatcherServlet is in loader LaunchedClassLoader
- ServletAdvice is in loader 'app')
-```
-`LaunchedClassLoader` 소속 `DispatcherServlet`이 `App ClassLoader` 소속 `ServletAdvice`의 `private` 필드에 접근하려 했기 때문에 발생한 에러입니다. `suppress = Throwable.class`는 `Error`도 억제하기 때문에 이 에러는 무시됐고, `onEnter()`는 `long` 기본값 0을 반환했습니다.
+**3차 시도. 분리된 advice에서 `IllegalAccessError` 노출**
+
+`ServletAdvice`는 `DispatcherServlet.doDispatch`에 후킹되어 매 요청마다 호출됩니다. 매 요청에 간섭해 코드를 심는 방식보다 한 번의 후킹으로 동일한 효과를 낼 수 있는 방법을 모색했습니다.
+
+이 프로젝트의 로깅은 Spring Boot 기본 logger인 Logback 하나로 통일되어 있어, Logback의 출력 책임을 가진 `Appender`를 초기화 시점에 1회만 등록하면 이후의 모든 로그가 그 `Appender`를 거쳐 수집됩니다. Log appender 등록 책임을 `AppenderRegistrationAdvice`로 분리하고 후킹 자리를 `FrameworkServlet.initServletBean`(Spring MVC 초기화 1회)으로 옮겼습니다.
+
+`AtomicBoolean`의 `compareAndSet(false, true)`은 원자적 비교-교환 연산이라 여러 스레드가 동시에 호출해도 `true`를 반환하는 호출은 단 하나뿐입니다. `ServletAdvice`에서 제거했던 이 코드를 새로 만든 `AppenderRegistrationAdvice`에 옮겨 appender 등록의 초기 1회 실행을 보장했습니다.
+
+`doDispatch`처럼 매 요청을 후킹하는 자리와 달리, 초기 1회 등록이 정상 동작하면 `suppress`로 에러를 억제하지 않아도 타겟 앱 실행에 영향을 주지 않으리라 보고 `suppress`를 적용하지 않은 채 실행했더니 콘솔에 다음 에러가 출력됐습니다.
 
 ```
-private static AtomicBoolean appenderRegistered (App ClassLoader 소속)
-  → LaunchedClassLoader 소속 DispatcherServlet이 접근 시도
-  → private 필드 → IllegalAccessError 발생
-  → suppress = Throwable.class 가 억제
-  → onEnter() 반환값 long 기본값 0
-  → startTime = 0 → epoch 0 → 1970-01-01 09:00:00 (KST)
+java.lang.IllegalAccessError: class org.springframework.web.servlet.FrameworkServlet
+tried to access private field com.apm.observatory.agent.advice.mvc.AppenderRegistrationAdvice.appenderRegistered
+(FrameworkServlet is in loader LaunchedClassLoader
+ AppenderRegistrationAdvice is in loader 'app')
 ```
 
 ---
 
 **4차 시도. `System.getProperty`로 우회**
 
-ClassLoader 문제를 해결하는 과정에서 발견했다보니 이 에러도 ClassLoader 경계 문제의 연장으로 받아들였습니다. Bootstrap ClassLoader 소속인 `java.lang.System`을 경유하는 방식으로 해결했습니다. `System.getProperty/setProperty`는 Bootstrap ClassLoader 소속 `public` 메서드라 `LaunchedClassLoader`든 `App ClassLoader`든 어디서든 접근할 수 있습니다.
+ClassLoader가 클래스를 찾을 때의 의존성 방향을 고려해, agent와 targetapp의 ClassLoader가 공유하는 공통 조상인 Bootstrap ClassLoader를 통해 탐색 가능하게 하기 위해 `System.getProperty`/`setProperty`를 응용했습니다. `java.lang.System`은 JDK 기본 클래스라 Bootstrap ClassLoader에 로드되므로 어느 ClassLoader 환경에서도 접근 가능합니다.
+
+```java
+@Advice.OnMethodExit
+public static void onExit() {
+    if (System.getProperty("apm.appender.registered") == null) {
+        System.setProperty("apm.appender.registered", "true");
+        registerGrpcAppender();
+        ClassLoaderDiagnostic.run();
+    }
+}
+```
 
 ---
 
 **5차 시도. `public static AtomicBoolean`으로 개선 (해결)**
 
-나중에 다시 생각해보니 원인은 ClassLoader 경계가 아니라 `private` 접근 제어자였습니다. `public static`으로 바꾸는 것만으로 해결되고, `compareAndSet`의 원자적 연산으로 멀티 스레드 환경에서의 1회 실행 보장까지 되는 더 나은 해결책이었습니다. `System.getProperty/setProperty` 방식은 `get`과 `set`이 별개 연산이라 동시성을 고려하지 않은 자원값 변경으로 동시성 문제가 있을 수 있다고 판단했습니다.
+ClassLoader 경계 시각에 매몰되어 있다가 `IllegalAccessError` 에러 문구를 다시 보니, 결국 다른 클래스의 `private` 필드에 접근할 수 없다는 접근 제어자의 문제였습니다. `public static`으로 바꾸는 것만으로 해결되고, `AtomicBoolean.compareAndSet(false, true)`의 원자적 비교-교환 연산으로 멀티 스레드 환경에서의 1회 실행 보장까지 되는 더 나은 해결책이었습니다. `System.getProperty/setProperty` 방식은 `get`과 `set`이 별개 연산이라 동시성을 고려하지 않은 자원값 변경으로 동시성 문제가 있을 수 있다고 판단했습니다.
 
 ```java
-// 최종
 public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
-        if (appenderRegistered.compareAndSet(false, true)) {
-        registerGrpcAppender();
-        }
+if (appenderRegistered.compareAndSet(false, true)) {
+    registerGrpcAppender();
+}
 ```
 
 📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)

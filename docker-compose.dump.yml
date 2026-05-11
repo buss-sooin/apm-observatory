@@ -1,0 +1,41 @@
+# Byte Buddy 변환 결과 바이트코드 덤프 모드 오버라이드
+#
+# 적용 범위: targetappmvc만
+#   agent가 -javaagent로 targetappmvc JVM에 붙어서 후킹하므로
+#   변환은 targetappmvc 컨테이너 안에서만 발생.
+#   다른 서비스(gateway, collectorserver 등)는 후킹 대상이 아님.
+#
+# 사용법:
+#
+#   [사전 1회 — 호스트 디렉토리 생성]
+#   mkdir -p ./docker/bb-dump
+#
+#   [덤프 모드 실행]
+#   docker compose down
+#   docker compose -f docker-compose.yml -f docker-compose.dump.yml up -d --build
+#
+#   [첫 요청 트리거 — Spring MVC 초기화 시점에 후킹 동작]
+#   curl http://localhost:8080/health
+#
+#   [결과 확인]
+#   ls ./docker/bb-dump/
+#
+#   [일반 모드 복귀]
+#   docker compose down
+#   docker compose up -d --build
+#
+# 결과 파일:
+#   ./docker/bb-dump/<binary 클래스명>-<hash>.class
+#   호스트에서 javap -c -p 로 디스어셈블 가능.
+
+services:
+  targetappmvc:
+    environment:
+      # JAVA_TOOL_OPTIONS는 표준 JVM 환경변수
+      # ENTRYPOINT 수정 없이 모든 java 실행에 자동으로 옵션이 주입됨
+      # net.bytebuddy.dump 옵션은 Byte Buddy가 변환한 클래스를 .class로 디스크 저장
+      JAVA_TOOL_OPTIONS: "-Dnet.bytebuddy.dump=/tmp/bb-dump"
+    volumes:
+      # 컨테이너의 /tmp/bb-dump를 호스트 ./docker/bb-dump로 마운트 (bind mount)
+      # 호스트 디렉토리는 첫 실행 전에 직접 생성 필요 (위 사전 1회 명령 참고)
+      - ./docker/bb-dump:/tmp/bb-dump
