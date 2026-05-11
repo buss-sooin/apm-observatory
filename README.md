@@ -1057,7 +1057,7 @@ SELECT start_time FROM spans WHERE span_type = 'INTERNAL' LIMIT 5;
 
 `long` 변수 반환 직전까지의 코드 줄을 하나씩 제거하며 테스트한 결과, `private static AtomicBoolean appenderRegistered` 선언과 `compareAndSet`을 실행하는 if 문을 함께 제거했을 때 DB에 날짜가 정상 저장됐습니다.
 
-이후 `long` 형 반환값이 0으로 치환되는 자리를 찾기 위해 Byte Buddy 변환 결과를 디스크에 덤프해 javap으로 확인했더니, 도입부의 바이트코드 블록에 보이는 `getstatic`(offset 0~5)에서 `IllegalAccessError`가 발생하고, `suppress` 옵션에 의해 자동 삽입된 catch 블록(offset 50~52)이 `pop` + `lconst_0`으로 `long` 0을 반환값 자리에 채우는 구조였습니다.
+이후 `long` 형 반환값이 0으로 치환되는 자리를 찾기 위해 Byte Buddy 변환 결과를 디스크에 덤프해 javap으로 확인했더니, 도입부의 바이트코드 블록에 보이는 `getstatic`(offset 0-5)에서 `IllegalAccessError`가 발생하고, `suppress` 옵션에 의해 자동 삽입된 catch 블록(offset 50-52)이 `pop` + `lconst_0`으로 `long` 0을 반환값 자리에 채우는 구조였습니다.
 
 ---
 
