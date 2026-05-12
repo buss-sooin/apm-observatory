@@ -1085,12 +1085,12 @@ ClassLoader가 클래스를 찾을 때의 의존성 방향을 고려해, agent�
 ```java
 @Advice.OnMethodExit
 public static void onExit() {
-    if (System.getProperty("apm.appender.registered") == null) {
+        if (System.getProperty("apm.appender.registered") == null) {
         System.setProperty("apm.appender.registered", "true");
         registerGrpcAppender();
         ClassLoaderDiagnostic.run();
-    }
-}
+        }
+        }
 ```
 
 ---
@@ -1102,22 +1102,23 @@ ClassLoader 경계 시각에 매몰되어 있다가 `IllegalAccessError` 에러 
 ```java
 public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
-if (appenderRegistered.compareAndSet(false, true)) {
-    registerGrpcAppender();
-}
+        if (appenderRegistered.compareAndSet(false, true)) {
+        registerGrpcAppender();
+        }
 ```
 
 📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
 
 ---
 
+<a id="classloader-diagnostic"></a>
 **ClassLoaderDiagnostic**
 
 ClassLoader 문제를 디버깅하는 과정에서 JVM에 어떤 ClassLoader들이 올라와 있고 계층 구조가 어떻게 되는지를 직접 찍어볼 수단이 없었습니다. 출력 유틸리티를 직접 만들기로 했습니다.
 
 `Instrumentation` 객체는 `premain()`의 인자로만 받을 수 있어서 `AgentMain`에서 `ClassLoaderDiagnostic.init(inst)`로 먼저 전달해야 합니다. 이후 진단이 필요한 시점에 `public static` 메서드를 직접 호출합니다. 내부적으로는 데이터 조회와 출력 역할을 분리해서 출력 메서드만 외부에 노출했습니다.
 
-실제 출력 결과는 [10. 실행 방법](#10-실행-방법)의 시연 단계에서 확인할 수 있습니다.
+실제 출력 결과는 [10-5. ClassLoaderDiagnostic 출력 확인](#10-5-classloaderdiagnostic-출력-확인)에서 확인할 수 있습니다.
 
 ```
 ===== [Diagnostic] ClassLoader 계층 구조 =====
@@ -1467,5 +1468,30 @@ docker compose down --rmi all -v
 ```
 
 [▲ 목차로](#목차)
+
+### 10-5. ClassLoaderDiagnostic 출력 확인
+
+`프로젝트 진행 중 어려웠던 문제들과 해결과정` 단락의 ClassLoaderDiagnostic
+설명에서 이어집니다.
+
+이 출력은 **targetappmvc 로 첫 HTTP 요청이 들어와야** 트리거됩니다.
+
+다음 명령으로 targetappmvc 컨테이너 로그를 실시간으로 띄워둡니다.
+
+```bash
+docker logs -f apm-targetappmvc
+```
+
+이 상태에서 별도 터미널로 요청을 한 번 보냅니다.
+
+```bash
+curl http://localhost:8080/combined
+```
+
+로그 화면에 `===== [Diagnostic] ClassLoader 계층 구조 =====` 로 시작하는
+출력이 찍히면 정상입니다. 출력 형태와 의미는 위 ClassLoaderDiagnostic
+단락의 예시를 참고하면 됩니다.
+
+[↩ ClassLoaderDiagnostic 단락으로 돌아가기](#classloader-diagnostic)
 
 [▲ 목차로](#목차)
