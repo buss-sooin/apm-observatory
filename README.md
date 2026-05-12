@@ -10,10 +10,8 @@
 - [6. 데이터 흐름과 코드 경로](#6-데이터-흐름과-코드-경로)
 - [7. 프로젝트 진행 중 어려웠던 문제들과 해결과정](#7-프로젝트-진행-중-어려웠던-문제들과-해결과정)
 - [8. 테스트 전략](#8-테스트-전략)
-- [9. 현실 조건에서의 타협](#9-현실-조건에서의-타협)
-- [10. AI와 함께 개발한 방식](#10-ai와-함께-개발한-방식)
-- [11. 실행 방법](#11-실행-방법)
-- [12. 앞으로 개선하고 싶은 것](#12-앞으로-개선하고-싶은-것)
+- [9. AI 사용 노트](#9-ai-사용-노트)
+- [10. 실행 방법](#10-실행-방법)
 
 ---
 
@@ -46,7 +44,7 @@ APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 �
 
 **빠른 둘러보기**
 
-빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 모양을, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 잡을 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [11. 실행 방법](#11-실행-방법)을 보면 됩니다.
+빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 모양을, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 잡을 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [10. 실행 방법](#10-실행-방법)을 보면 됩니다.
 
 [▲ 목차로](#목차)
 
@@ -1119,7 +1117,7 @@ ClassLoader 문제를 디버깅하는 과정에서 JVM에 어떤 ClassLoader들�
 
 `Instrumentation` 객체는 `premain()`의 인자로만 받을 수 있어서 `AgentMain`에서 `ClassLoaderDiagnostic.init(inst)`로 먼저 전달해야 합니다. 이후 진단이 필요한 시점에 `public static` 메서드를 직접 호출합니다. 내부적으로는 데이터 조회와 출력 역할을 분리해서 출력 메서드만 외부에 노출했습니다.
 
-실제 출력 결과는 [11. 실행 방법](#11-실행-방법)의 시연 단계에서 확인할 수 있습니다.
+실제 출력 결과는 [10. 실행 방법](#10-실행-방법)의 시연 단계에서 확인할 수 있습니다.
 
 ```
 ===== [Diagnostic] ClassLoader 계층 구조 =====
@@ -1268,7 +1266,7 @@ spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
 
 ---
 
-## 9. 현실 조건에서의 타협
+## 9. AI 사용 노트
 
 *다음 채팅에서 작성 예정*
 
@@ -1276,24 +1274,198 @@ spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
 
 ---
 
-## 10. AI와 함께 개발한 방식
+## 10. 실행 방법
 
-*다음 채팅에서 작성 예정*
+### 10-1. 사전 요구사항
+
+이 프로젝트는 Docker 컨테이너 11개를 동시에 띄웁니다.
+인프라(PostgreSQL/TimescaleDB, Redis, MySQL, Ollama), Java 애플리케이션 5개
+(gateway, targetappmvc, collectorserver, aipipeline, apiserver), 그리고
+Ollama 모델을 자동으로 다운로드하는 일회성 초기화 컨테이너 한 개로 구성됩니다.
+
+**필요한 도구**
+
+- Docker Engine 또는 Docker Desktop (docker compose 명령어 지원 버전)
+- Git
+
+**Docker 리소스 설정**
+
+Ollama가 LLM 모델을 메모리에 로드하고, Java 컨테이너 5개가 각자 JVM을 띄우며,
+DB 두 종류(TimescaleDB, MySQL)가 함께 돌아가기 때문에 Docker 기본 리소스로는
+부족합니다. Docker Desktop을 쓰는 경우 Settings → Resources에서 다음 범위로
+조정해주세요. 개인 PC마다 할당 가능한 리소스가 다를 수 있어 환경에 맞게
+조절하면 됩니다.
+
+| 항목 | 범위 |
+|---|---|
+| CPU | 4 cores 이상 |
+| Memory | 8 GB 이상 |
+| Disk image size | 80 GB 이상 |
+
+**포트 사용 여부 점검**
+
+다음 포트가 호스트에 열립니다. 다른 프로세스가 점유 중이면 컨테이너가 뜨지
+않으니 미리 확인해주세요.
+
+| 포트 | 용도 |
+|---|---|
+| 5432 | PostgreSQL (TimescaleDB) |
+| 6379 | Redis |
+| 3306 | MySQL |
+| 11434 | Ollama |
+| 9090 | Gateway (gRPC) |
+| 8080 | targetappmvc (HTTP) |
+| 8083 | aipipeline (HTTP) |
+| 8084 | apiserver (HTTP) |
 
 [▲ 목차로](#목차)
 
----
+### 10-2. 최초 실행
 
-## 11. 실행 방법
+저장소를 로컬에 받아온 뒤, 프로젝트 루트에서 다음을 실행합니다.
 
-*다음 채팅에서 작성 예정*
+```bash
+docker compose up -d --build
+```
+
+Java 컨테이너 5개를 각각 Gradle로 빌드하므로 최초 실행은 시간이 꽤
+걸립니다. 빌드가 끝난 컨테이너부터 순차적으로 기동되며, aipipeline은
+Ollama 모델 다운로드가 끝나야 시작합니다.
+
+**모델 다운로드 진행 상황 확인 (선택)**
+
+```bash
+docker logs -f apm-ollama-init
+```
+
+**기동 완료 확인**
+
+```bash
+docker compose ps
+```
+
+모든 컨테이너의 상태가 `Up (healthy)` 로 표시되면 시연 준비가 끝난
+상태입니다. `apm-ollama-init` 은 모델 다운로드 후 정상 종료되므로
+목록에 보이지 않아도 정상입니다.
 
 [▲ 목차로](#목차)
 
----
+### 10-3. 시연 시나리오
 
-## 12. 앞으로 개선하고 싶은 것
+이 프로젝트의 핵심은 수집된 데이터를 바탕으로 AI가 이상 패턴을 감지해
+DB에 결과를 남기는 흐름입니다. 시연은 토큰 발급 → 임계값 조정 →
+트래픽 발생 → 데이터 확인 → AI 감지 결과 확인 순서로 진행합니다.
 
-*다음 채팅에서 작성 예정*
+**1. 토큰 발급**
+
+apiserver의 인증 API에서 JWT 토큰을 발급받습니다. 이후의 모든 API
+호출에 이 토큰이 필요합니다.
+
+```bash
+curl -X POST http://localhost:8084/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin0903"}'
+```
+
+응답에 들어있는 `token` 값을 이후 명령어의 `<TOKEN>` 자리에 넣습니다.
+
+**2. 임계값 낮추기 (시연용)**
+
+기본 임계값이 높게 잡혀있어 짧은 시연 트래픽으로는 AI 감지가 발생하지
+않습니다. 시연 목적으로 임계값을 낮춥니다.
+
+```bash
+curl -X POST http://localhost:8084/config/threshold \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "app_name": "targetappmvc",
+    "cpu_threshold": 0.1,
+    "memory_threshold": 0.1,
+    "span_duration_multiplier": 0.01,
+    "external_ratio_multiplier": 0.01,
+    "slope_min_positive": 0.000001
+  }'
+```
+
+**3. 트래픽 발생**
+
+`/combined` 엔드포인트는 DB 쿼리와 외부 API 호출을 동시에 수행해서 한
+요청으로 메트릭, 스팬 트리, 로그가 모두 수집되게 만든 시연용
+엔드포인트입니다.
+
+```bash
+for i in $(seq 1 15); do
+  curl -s -o /dev/null -w "$i: %{http_code}\n" http://localhost:8080/combined
+  sleep 1
+done
+```
+
+**4. 수집 결과 확인**
+
+조회 API 목록입니다. 모두 `Authorization: Bearer <TOKEN>` 헤더가 필요합니다.
+
+```bash
+# 현재 메트릭
+curl "http://localhost:8084/metrics/current?app_name=targetappmvc" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# 메트릭 추세
+curl "http://localhost:8084/metrics/trend?app_name=targetappmvc&start_time=<START>&end_time=<END>" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# 메트릭 요약
+curl "http://localhost:8084/metrics/summary?app_name=targetappmvc&start_time=<START>&end_time=<END>" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# 스팬 폭포수
+curl "http://localhost:8084/spans/waterfall?trace_id=<TRACE_ID>" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# 로그 스트림
+curl "http://localhost:8084/logs/stream?app_name=targetappmvc&start_time=<START>&end_time=<END>" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+`<START>` 와 `<END>` 는 ISO-8601 형식(예: `2026-05-12T00:00:00Z`),
+`<TRACE_ID>` 는 스팬 응답에 포함된 trace 식별자입니다.
+
+**5. AI 감지 결과 확인**
+
+aipipeline은 1분 주기 스케줄러로 즉시 판정을 돌립니다. 트래픽 발생
+직후에는 결과가 아직 없을 수 있으니, 1~2분 정도 기다린 뒤 확인합니다.
+DB에서 직접 결과를 조회합니다.
+
+```bash
+docker exec apm-postgres psql -U apm_user -d apm_db \
+  -c "SELECT id, app_name, severity, pattern_type, ai_summary, timestamp
+      FROM ai_analysis_results
+      ORDER BY timestamp DESC
+      LIMIT 5;"
+```
+
+`pattern_type` 컬럼에 감지된 패턴(`COLLAPSE`, `EXTERNAL_IMPACT`, `EROSION`
+중 하나)과 `ai_summary` 에 LLM이 생성한 요약 텍스트가 들어있으면 시연이
+정상 동작한 것입니다.
+
+[▲ 목차로](#목차)
+
+### 10-4. 시연 후 삭제 및 초기화
+
+시연이 끝나고 이 프로젝트와 관련된 자원을 모두 정리합니다.
+
+**이 프로젝트가 빌드한 이미지만 삭제 (같은 외부 이미지를 쓰는 다른 도구가 있을 때)**
+
+```bash
+docker compose down --rmi local -v
+```
+
+**이 프로젝트가 빌드한 이미지 + 외부 의존 이미지 모두 삭제**
+
+```bash
+docker compose down --rmi all -v
+```
+
+[▲ 목차로](#목차)
 
 [▲ 목차로](#목차)
