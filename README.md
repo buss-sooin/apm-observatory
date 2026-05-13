@@ -134,7 +134,7 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 
 ## 3. 전체 구조 한눈에 보기
 
-![아키텍처 다이어그램](https://github.com/user-attachments/assets/c2b91d3f-86ef-4b45-a97e-ef099a80ab30)
+![아키텍처 다이어그램](https://github.com/user-attachments/assets/644328ec-e2c9-44af-8bd9-6ccbbd99401b)
 
 데이터는 타겟 앱에서 시작해서 에이전트, 게이트웨이, Redis, 수집서버를 거쳐 TimescaleDB에 쌓입니다. 이후 API 서버와 AI 파이프라인이 독립적으로 그 데이터를 소비합니다.
 
