@@ -1101,7 +1101,7 @@ public static void onExit() {
         registerGrpcAppender();
         ClassLoaderDiagnostic.run();
         }
-        }
+}
 ```
 
 ---
@@ -1115,7 +1115,7 @@ public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
         if (appenderRegistered.compareAndSet(false, true)) {
         registerGrpcAppender();
-        }
+}
 ```
 
 📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
@@ -1228,7 +1228,7 @@ void cpu_급등시_SPIKED() {
         List<MetricsSnapshot> metrics = List.of(metricsSnapshot(60.0, 1000L, 8000L));
         assertThat(evaluator.isResourceSpiked(metrics, 15.0, 500.0, SPIKE_MULTIPLIER))
         .isEqualTo(ResourceStatus.SPIKED);
-        }
+}
 ```
 
 위 수식의 각 변수는 이 테스트 입력값과 다음과 같이 대응됩니다.
