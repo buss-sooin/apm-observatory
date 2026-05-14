@@ -1101,7 +1101,7 @@ public static void onExit() {
         registerGrpcAppender();
         ClassLoaderDiagnostic.run();
         }
-}
+        }
 ```
 
 ---
@@ -1372,6 +1372,8 @@ curl -X POST http://localhost:8084/auth/login \
 ```
 
 응답에 들어있는 `token` 값을 이후 명령어의 `<TOKEN>` 자리에 넣습니다.
+또는 `http://localhost:8084/swagger-ui/index.html` 에서 같은 API 를
+직접 실행해 토큰을 받을 수도 있습니다.
 
 **2. 임계값 낮추기 (시연용)**
 
@@ -1470,6 +1472,25 @@ docker compose down --rmi local -v
 docker compose down --rmi all -v
 ```
 
+**볼륨 정리 확인**
+
+컨테이너가 이미 정리된 상태에서 `down -v`를 실행하면 이미지는
+삭제되지만 볼륨은 남아있을 수 있습니다. 아래 명령어로 남은 볼륨을
+확인합니다.
+
+```bash
+docker volume ls --filter "name=apm-observatory_"
+```
+
+결과에 볼륨이 표시되면 다음 명령어로 직접 삭제합니다.
+
+```bash
+docker volume rm apm-observatory_mysql_data \
+                 apm-observatory_ollama_data \
+                 apm-observatory_postgres_data \
+                 apm-observatory_redis_data
+```
+
 [▲ 목차로](#목차)
 
 ### 9-5. ClassLoaderDiagnostic 출력 확인
@@ -1477,23 +1498,27 @@ docker compose down --rmi all -v
 `프로젝트 진행 중 어려웠던 문제들과 해결과정` 단락의 ClassLoaderDiagnostic
 설명에서 이어집니다.
 
-이 출력은 **targetappmvc 로 첫 HTTP 요청이 들어와야** 트리거됩니다.
-
-다음 명령으로 targetappmvc 컨테이너 로그를 실시간으로 띄워둡니다.
-
-```bash
-docker logs -f apm-targetappmvc
-```
-
-이 상태에서 별도 터미널로 요청을 한 번 보냅니다.
+`docker compose ps` 결과 targetappmvc 컨테이너가 healthy 상태라면,
+healthcheck 가 보낸 HTTP 요청이 ClassLoaderDiagnostic 을 이미
+트리거했기 때문에 별도 요청 없이도 출력이 로그에 남아있습니다.
+다음 명령으로 출력을 확인합니다.
 
 ```bash
-curl http://localhost:8080/combined
+docker logs apm-targetappmvc | grep -A 30 "ClassLoader 계층 구조"
 ```
 
-로그 화면에 `===== [Diagnostic] ClassLoader 계층 구조 =====` 로 시작하는
-출력이 찍히면 정상입니다. 출력 형태와 의미는 위 ClassLoaderDiagnostic
-단락의 예시를 참고하면 됩니다.
+`===== [Diagnostic] ClassLoader 계층 구조 =====` 로 시작하는 블록이
+출력되면 정상입니다. 형태와 의미는 위 ClassLoaderDiagnostic 단락의
+예시를 참고하면 됩니다.
+
+> **참고**: Spring Boot 의 DispatcherServlet 은 기본적으로 lazy init
+> 입니다. 컨테이너가 healthy 상태가 되기 전이거나 healthcheck 가
+> 없는 환경에서는 아직 트리거되지 않을 수 있습니다. 그런 경우
+> 다음 명령으로 첫 요청을 직접 보낸 뒤 위 조회 명령으로 확인합니다.
+>
+> ```bash
+> curl http://localhost:8080/combined
+> ```
 
 [↩ ClassLoaderDiagnostic 단락으로 돌아가기](#classloader-diagnostic)
 
