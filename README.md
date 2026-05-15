@@ -57,7 +57,7 @@ AI 코딩 방식은 큰 틀에서 세 단계로 변화해왔습니다. 한 번�
 
 빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 모양을, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 잡을 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [9. 실행 방법](#9-실행-방법)을 보면 됩니다.
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -104,7 +104,7 @@ Kafka는 파티셔닝 기반 수평 확장, 컨슈머 그룹별 독립 오프셋
 ---
 
 **시계열 저장**
-- 일반 PostgreSQL
+- PostgreSQL
 - InfluxDB
 - **PostgreSQL + TimescaleDB** ✓
 
@@ -113,11 +113,11 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 ---
 
 **수집서버 처리 모델**
-- 전통적 스레드풀
-- Spring WebFlux
-- **전통적 스레드풀 + 스케줄러** ✓
+- Tomcat + Spring MVC
+- Netty + Spring WebFlux
+- **Tomcat + Spring MVC + 스케줄러** ✓
 
-전통적 스레드풀은 I/O 대기 중 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Redis Streams를 주기적으로 폴링하고 DB에 저장하는 단순한 흐름이라 Spring의 `@Scheduled` 스케줄러로 충분하다고 판단했습니다.
+Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Redis Streams를 주기적으로 폴링하고 DB에 저장하는 단순한 흐름이라 Spring의 `@Scheduled` 스케줄러로 충분하다고 판단했습니다.
 
 ---
 
@@ -128,7 +128,7 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 
 처음에는 외부 API를 쓰는 방향도 봤는데, 호출마다 비용이 나가고 네트워크 연결이 없으면 시연도 안 되는 게 부담이었습니다. Ollama로 로컬에서 모델을 직접 돌리면 그 문제가 없었고, Spring AI가 모델 교체를 추상화해줘서 나중에 외부 API로 전환해도 코드 변경이 최소화될 것으로 봤습니다. 엔터프라이즈급 AI 파이프라인이 실제로 어떻게 구성되는지는 알지 못하기 때문에 개인 수준에서 무료로 접목할 수 있는 방식으로 구현했고, 그 접목 방식을 직접 설계하고 구현해본 것에 의미를 뒀습니다.
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -152,7 +152,7 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 | targetappmvc | 에이전트 후킹 대상 샘플 애플리케이션 |
 | common | gRPC Protobuf 정의 공유 모듈 |
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -215,24 +215,47 @@ OS Thread-1는 블로킹되지 않음
 
 다음과 같이 구현했습니다. Java 에이전트 안에서 `QueueWorker`를 별도 데몬 스레드로 분리했습니다. `setDaemon(true)`로 설정하면 타겟 앱의 일반 스레드가 모두 종료될 때 JVM과 함께 종료됩니다. Advice는 `DataQueue`에 넣기만 하고 `QueueWorker`가 배치로 묶어 Netty 기반 gRPC 채널로 전송합니다. Netty는 비동기 이벤트 루프 기반이라 전송 중에 `QueueWorker` 스레드가 블로킹되지 않습니다. 이 규모에서는 단일 데몬 스레드로 충분하다고 판단했습니다.
 
-```
-[Tomcat Thread Pool]          [데몬 스레드 - QueueWorker]
-Request-1                     
-  └─ Advice                   drainTo() → 배치 조립
-       └─ DataQueue.offer()   → Netty gRPC 비동기 전송
-Request-2                          → gateway
-  └─ Advice                   
-       └─ DataQueue.offer()   
-Request-N                     
-  └─ Advice                   
-       └─ DataQueue.offer()   
+```mermaid
+flowchart LR
+    subgraph TOMCAT["Tomcat Thread Pool"]
+        direction TB
+        R1["Request-1<br/>Advice<br/>DataQueue.offer"]
+        R2["Request-2<br/>Advice<br/>DataQueue.offer"]
+        RN["Request-N<br/>Advice<br/>DataQueue.offer"]
+    end
 
-offer() 즉시 반환 — 블로킹 없음
-큐 꽉 찼을 시 드롭 — 타겟 앱 영향 없음
+    QUEUE[("DataQueue")]
+
+    subgraph DAEMON["QueueWorker"]
+        direction TB
+        DRAIN["drainTo<br/>배치 조립"]
+        SEND["Netty gRPC<br/>비동기 전송"]
+    end
+
+    GATEWAY(["gateway"])
+
+    R1 --> QUEUE
+    R2 --> QUEUE
+    RN --> QUEUE
+    QUEUE --> DRAIN
+    DRAIN --> SEND
+    SEND --> GATEWAY
+
+    classDef tomcatStyle fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
+    classDef daemonStyle fill:#0f6e56,stroke:#04342c,color:#ffffff,font-weight:bold
+    classDef queueStyle fill:#fac775,stroke:#854f0b,color:#412402,font-weight:bold
+    classDef gatewayStyle stroke-dasharray: 5 5
+
+    class TOMCAT tomcatStyle
+    class DAEMON daemonStyle
+    class QUEUE queueStyle
+    class GATEWAY gatewayStyle
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java)
+`QueueWorker`는 `setDaemon(true)`로 등록된 데몬 스레드로 동작합니다. `offer()`는 즉시 반환되어 타겟 앱 스레드를 블로킹하지 않고, 큐가 꽉 차면 드롭되어 타겟 앱에 영향을 주지 않습니다.
+
+- [`agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java)
+- [`agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/queue/DataQueue.java)
 
 ---
 
@@ -268,8 +291,8 @@ ApiKeyAuthInterceptor
         MonitoringServiceImpl → RedisStreamPublisher
 ```
 
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java)
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java)
 
 ---
 
@@ -291,11 +314,11 @@ agent ──→ gateway(역직렬화) ──→ Redis Streams(Map<String,String>
                                 AOF 보존                              common 모듈 의존 없음
 ```
 
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
 
 모니터링은 수집한 데이터가 즉시 결과로 이어져야 합니다. 에이전트가 동시다발적으로 보내는 데이터를 빠르게 받는 것만큼, 게이트웨이가 Redis Streams로 발행하는 속도도 중요합니다. 발행이 블로킹되면 그만큼 데이터가 파이프라인에 늦게 진입하고 모니터링 결과도 늦어집니다. Netty 기반으로 하나의 커넥션을 여러 스레드가 공유할 수 있고 발행 응답을 기다리는 동안 스레드가 블로킹되지 않는 Lettuce 비동기 방식을 선택했습니다. ([Lettuce 공식 문서](https://redis.github.io/lettuce/user-guide/async-api/))
 
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
 
 ---
 
@@ -313,7 +336,7 @@ agent ──→ gateway(역직렬화) ──→ Redis Streams(Map<String,String>
 
 Redis Streams는 새로운 메시지를 끝에 덧붙이기만 할 수 있는 로그 구조이며, 메시지 ACK와 Consumer Group을 기본으로 제공합니다([Redis 공식 — Streams](https://redis.io/docs/latest/develop/data-types/streams/)). Consumer Group이 메시지를 소비하면 PEL(Pending Entry List)에 기록되고, 처리한 결과를 ACK로 보내야 PEL에서 제거됩니다. 처리에 실패하면 ACK 없이 PEL에 남아 다음 폴링에서 다시 시도할 수 있습니다. 수집서버는 DB 저장까지 성공한 뒤에만 ACK를 보내도록 두어 유실 가능성을 차단했습니다.
 
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
 
 ---
 
@@ -331,7 +354,7 @@ INTERNAL duration = ROOT duration - sum(DB) - sum(EXTERNAL)
 
 이 계산이 성립하려면 같은 TraceID의 ROOT, DB, EXTERNAL Span이 모두 도착해야 합니다. 이 프로젝트의 에이전트는 Span이 종료되는 시점마다 게이트웨이로 전송하는 구조라, 같은 TraceID 묶음이 수집서버에 한 번에 도착하지 않습니다. TraceID별로 Span을 모아두는 버퍼(`TraceBuffer`)를 두고, 일정 시간이 지나면 그 시점까지 모인 Span으로 INTERNAL을 계산해 한꺼번에 저장하는 방식을 택했습니다. 전파되는 TraceID의 종료 시점을 어떻게 특정해야 할지는 명확히 알 수 없어 버퍼 수집 시간은 30초로 정했습니다.
 
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java)
 
 ---
 
@@ -341,8 +364,8 @@ AI를 어떻게 쓸지 먼저 정했습니다. 이상을 감지하는 데 쓰는
 
 이상 감지 규칙은 일종의 도메인 로직이라 스트림으로 전달받은 데이터를 즉시 저장하는 수집서버의 역할과 책임에서 분리되는 게 맞다고 봤습니다. 모니터링이라는 분야를 깊게 다뤄본 경험이 없어 단정하긴 어렵지만, 관측 데이터를 빠르게 모아 저장하고 즉시 제공하는 흐름이 모니터링의 중심이라고 생각했고, 그 흐름에 부가 연산을 끼워 넣어 저장 경로를 늘이고 싶지 않았습니다. 또 모델 호출은 응답 시간과 안정성이 일반 코드와 다르게 흔들리는 구간이라 분리해두면 AI 쪽에서 문제가 생겨도 수집과 제공의 기본 흐름에 전파되지 않습니다. 이런 이유로 aipipeline을 별도 모듈로 설계했습니다. 권고 결과를 외부에 노출하는 API 호출은 apiserver가 담당합니다.
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
 
 ---
 
@@ -533,9 +556,9 @@ RISING ⇔ slope > slopeMinPositive
 
 코드가 위 수식으로 측정 요소의 status를 결정하고, 그 status 조합으로 DetectionStatus를 확정한 뒤, AI는 그 결과와 근거 데이터를 받아 자연어 원인 설명과 권고를 생성합니다. 감지 결과의 신뢰는 규칙이, 설명의 품질은 AI가 책임집니다.
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceErosionEvaluator.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/ExternalImpactEvaluator.java)
 
 ---
 
@@ -562,9 +585,9 @@ AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해
 
 인증과 권한은 Spring Security와 JWT의 기본 구성을 그대로 따랐습니다. 로그인 시 JWT를 발급하고, 이후 요청은 Authorization 헤더로 검증하며, 설정 변경은 ADMIN 역할로 제한합니다. 외부 API 모듈에서 갖춰야 할 기본을 표준 방식으로 챙기는 정도이고, 별도의 결정이 들어간 자리는 아닙니다.
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/auth/`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/auth/)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/auth/`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/auth/)
 
 ---
 
@@ -576,8 +599,8 @@ AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해
 
 패키지를 레이어(controller, service, repository)로 나누는 방식이 익숙하지만 이 프로젝트에서는 기능(auth, metrics, span, log, config, ai) 단위로 나눴습니다. 레이어 기준으로 나누면 하나의 기능을 수정할 때 여러 패키지를 가로질러야 합니다. 기능 단위로 나누면 관련 코드가 한 곳에 모여 있어서 변경 범위를 파악하기 쉽습니다. 각 기능 안에서 필요한 레이어(controller, adapter, entity, repository, model)를 두는 방식으로 구성했습니다.
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/)
 
 ---
 
@@ -585,8 +608,8 @@ AI 분석 결과는 aipipeline이 이미 결과와 근거(evidence)를 분리해
 
 DB, Redis, 외부 API 같은 인프라와 도메인 로직 사이에 Port(인터페이스)와 Adapter(구현체)를 두었습니다. 도메인 로직이 JPA나 Redis 같은 기술 세부사항을 직접 알지 못하게 하기 위해서입니다. 단 모든 곳에 Port를 두지는 않았습니다. Entity에서 도메인 객체로 변환이 있거나 기술 교체 가능성이 있는 경우에만 Port + Adapter를 적용하고, 단순 조회/저장만 있는 경우는 Adapter만 두었습니다. 기준 없이 모든 곳에 인터페이스를 만드는 건 오히려 코드를 복잡하게 만든다고 판단했습니다.
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/port/MetricsPort.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/port/MetricsPort.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/port/MetricsPort.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/port/MetricsPort.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java)
 
 ---
 
@@ -598,10 +621,10 @@ AI 분석 결과만 저장하면 "왜 이 결론이 나왔는가"를 나중에 �
 
 `evidence` 테이블은 AI가 어떤 데이터를 보고 이 결론을 냈는지 기록합니다. 현재는 저장만 하고 API 응답에는 포함하지 않았습니다. 계산 재현에 필요한 도메인 로직이 여러 모듈에 걸쳐 있어서 API로 노출하려면 공통 모듈 분리가 선행되어야 한다고 판단했습니다.
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiRawResponseEntity.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/entity/AiAnalysisMetricsEvidenceEntity.java)
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -627,46 +650,46 @@ agent와 gateway가 gRPC로 통신할 때 쓰는 Protobuf 메시지 타입을 �
 
 **agent**
 
-타겟 앱 JVM에 `-javaagent`로 붙어서 동작합니다. Byte Buddy로 DispatcherServlet, PreparedStatement, RestClient를 후킹해서 Metrics, Spans, Logs를 수집하고 gRPC로 게이트웨이에 전송합니다. 타겟 앱 코드를 한 줄도 바꾸지 않습니다.
+타겟 앱 JVM에 `-javaagent`로 붙어서 동작합니다. Byte Buddy로 DispatcherServlet, PreparedStatement, RestClient를 후킹해서 Metrics, Spans, Logs를 수집하고 gRPC로 게이트웨이에 전송합니다.
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/AgentMain.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/AgentMain.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/)
+- [`agent/src/main/java/com/apm/observatory/agent/AgentMain.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/AgentMain.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/)
 
 **gateway**
 
 에이전트로부터 gRPC 요청을 받아 API Key 인증과 유효성 검증을 처리합니다. 통과한 데이터를 Metrics, Spans, Logs 각각의 Redis Stream으로 라우팅합니다. Netty 기반으로 동작합니다.
 
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/server/GatewayServer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/server/GatewayServer.java)
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/server/GatewayServer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/server/GatewayServer.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
 
 **collectorserver**
 
 Redis Streams를 Consumer Group으로 소비해서 TimescaleDB에 저장합니다. Metrics는 Disk IO 누적값 계산, Spans는 INTERNAL Span 파생 계산, Logs는 가공 없이 저장합니다.
 
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/)
 
 **aipipeline**
 
 스케줄러가 주기적으로 TimescaleDB에서 데이터를 읽어 세 가지 룰 기반 이상 감지를 수행합니다. 감지된 결과를 Ollama에 전달해 자연어 분석 결과와 권고를 받아 저장합니다.
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java)
 
 **apiserver**
 
 JWT + Spring Security 기반 인증으로 REST API를 제공합니다. Metrics 추세, Span 폭포수 차트, 로그 스트림, AI 분석 결과 조회, 임계값 설정 API를 포함합니다.
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/auth/security/SecurityConfig.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/auth/security/SecurityConfig.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/auth/security/SecurityConfig.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/auth/security/SecurityConfig.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java)
 
 **targetappmvc**
 
 에이전트 후킹 대상 샘플 애플리케이션입니다. Spring MVC + MySQL로 구성되며 DB 쿼리와 외부 API 호출을 동시에 발생시키는 `/combined` 엔드포인트로 시연에 활용합니다.
 
-📎 [`targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java)
+- [`targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java)
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -686,9 +709,9 @@ Metrics, Traces, Logs가 각각 어느 클래스를 거쳐 저장되고 조회�
 MetricsCollector → DataQueue → QueueWorker → GrpcSenderImpl → (gRPC) → gateway
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/collector/MetricsCollector.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/collector/MetricsCollector.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/sender/GrpcSenderImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/sender/GrpcSenderImpl.java)
+- [`agent/src/main/java/com/apm/observatory/agent/collector/MetricsCollector.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/collector/MetricsCollector.java)
+- [`agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/worker/QueueWorker.java)
+- [`agent/src/main/java/com/apm/observatory/agent/sender/GrpcSenderImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/sender/GrpcSenderImpl.java)
 
 **수신 → 저장**
 
@@ -698,10 +721,10 @@ MetricsCollector → DataQueue → QueueWorker → GrpcSenderImpl → (gRPC) →
 MonitoringServiceImpl → RedisStreamPublisher → stream:metrics → MetricsConsumer → MetricsProcessor → DB
 ```
 
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java)
-📎 [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/MetricsConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/MetricsConsumer.java)
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/MetricsProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/MetricsProcessor.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/service/MonitoringServiceImpl.java)
+- [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/MetricsConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/MetricsConsumer.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/MetricsProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/MetricsProcessor.java)
 
 **조회**
 
@@ -710,8 +733,8 @@ GET /metrics/trend    → MetricsController → MetricsPort → MetricsAdapter �
 GET /metrics/summary  → MetricsController → MetricsPort → MetricsAdapter → DB
 ```
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/controller/MetricsController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/metrics/adapter/MetricsAdapter.java)
 
 ---
 
@@ -727,9 +750,9 @@ PreparedStatementAdvice (DB)      ──┤→ DataQueue → QueueWorker → Grp
 RestClientRequestAdvice (EXTERNAL)──┘
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/ServletAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/ServletAdvice.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/PreparedStatementAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/PreparedStatementAdvice.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/RestClientRequestAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/RestClientRequestAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/ServletAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/ServletAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/PreparedStatementAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/PreparedStatementAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/RestClientRequestAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/RestClientRequestAdvice.java)
 
 **수신 → 저장**
 
@@ -739,8 +762,8 @@ RestClientRequestAdvice (EXTERNAL)──┘
 stream:spans → SpanConsumer → SpanProcessor → DB
 ```
 
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/SpanConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/SpanConsumer.java)
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/SpanConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/SpanConsumer.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/SpanProcessor.java)
 
 **조회**
 
@@ -750,8 +773,8 @@ stream:spans → SpanConsumer → SpanProcessor → DB
 GET /spans/waterfall?trace_id= → SpanController → SpanPort → SpanAdapter → DB
 ```
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/span/adapter/SpanAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/adapter/SpanAdapter.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/controller/SpanController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/span/adapter/SpanAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/span/adapter/SpanAdapter.java)
 
 ---
 
@@ -765,8 +788,8 @@ GET /spans/waterfall?trace_id= → SpanController → SpanPort → SpanAdapter �
 GrpcLogbackAppender (ROOT Logger 등록) → DataQueue → QueueWorker → GrpcSenderImpl → gateway
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java)
 
 **수신 → 저장**
 
@@ -774,8 +797,8 @@ GrpcLogbackAppender (ROOT Logger 등록) → DataQueue → QueueWorker → GrpcS
 stream:logs → LogConsumer → LogProcessor → DB
 ```
 
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/LogConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/LogConsumer.java)
-📎 [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/LogProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/LogProcessor.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/LogConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/LogConsumer.java)
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/LogProcessor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/processor/LogProcessor.java)
 
 **조회**
 
@@ -783,8 +806,8 @@ stream:logs → LogConsumer → LogProcessor → DB
 GET /logs/stream?app_name=&start_time=&end_time=&level= → LogController → LogAdapter → DB
 ```
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/log/controller/LogController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/log/controller/LogController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/log/adapter/LogAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/log/adapter/LogAdapter.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/log/controller/LogController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/log/controller/LogController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/log/adapter/LogAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/log/adapter/LogAdapter.java)
 
 ---
 
@@ -803,26 +826,40 @@ GET /logs/stream?app_name=&start_time=&end_time=&level= → LogController → Lo
 
 스케줄러가 1분마다 `PerformanceMonitoringScheduler.run()`을 호출하고, 그 안에서 등록된 앱마다 `PerformanceAnalysisPipelineContext`가 한 번 돕니다. 한 주기 동안 다음 단계를 거칩니다.
 
-```
-PerformanceMonitoringScheduler  (@Scheduled, 1분 주기)
-  ├─ Ollama 연결 확인 — 미연결 시 주기 스킵
-  └─ 등록된 앱마다 contextManager.process(appName)
-        │
-        ▼
-PerformanceAnalysisPipelineContext (Step Builder)
-  startWith()         앱 식별, 활성 PerformanceTrend 획득 (없으면 신규)
-  ─→ configure()      threshold_config 로드 (임계 배수, 절대 임계, 기울기 임계)
-  ─→ loadBaseline()   직전 기준 구간의 평균값 산출
-                      business_cycle 적용 시 전날 동시간대,
-                      미적용 시 직전 baseline-minutes 구간
-  ─→ loadSnapshot()   최근 측정 구간(recent-minutes)의 metrics·spans 수집
-  ─→ analyzeAnomalies()
-                      즉시 판정: CollapseDetectionStrategy, ExternalImpactDetectionStrategy
-                      판정 결과가 DETECTED면 OllamaAnalysisService 호출 → DB 저장
-  ─→ transferToTrend()
-                      누적 분석용 데이터 포인트를 활성 PerformanceTrend에 적재
-                      Trend가 erosion-minutes 도달 시 ErosionDetectionStrategy 평가
-                      평가 후 Trend 인스턴스 교체
+```mermaid
+flowchart TD
+    SCHED["PerformanceMonitoringScheduler<br/>@Scheduled · 1분 주기"]
+    OLLAMA{"Ollama 연결됨?"}
+    SKIP[/"주기 스킵"/]
+    PROCESS["contextManager.process appName<br/>등록된 앱마다 반복"]
+
+    SCHED --> OLLAMA
+    OLLAMA -->|미연결| SKIP
+    OLLAMA -->|연결됨| PROCESS
+
+    PROCESS --> CTX["PerformanceAnalysisPipelineContext<br/>Step Builder"]
+
+    CTX --> S1["startWith<br/>앱 식별, 활성 PerformanceTrend 획득"]
+    S1 --> S2["configure<br/>threshold_config 로드"]
+    S2 --> S3["loadBaseline<br/>직전 기준 구간 평균값 산출"]
+    S3 --> S4["loadSnapshot<br/>최근 측정 구간 metrics·spans 수집"]
+    S4 --> S5["analyzeAnomalies<br/>Collapse·ExternalImpact 즉시 판정"]
+
+    S5 --> DETECTED{"DETECTED?"}
+    DETECTED -->|예| OLLAMA_CALL(["OllamaAnalysisService<br/>→ DB 저장"])
+    DETECTED -->|아니오| S6
+    OLLAMA_CALL --> S6
+
+    S6["transferToTrend<br/>PerformanceTrend에 데이터 포인트 적재"]
+    S6 --> TREND_FULL{"erosion-minutes<br/>도달?"}
+    TREND_FULL -->|예| EROSION(["ErosionDetectionStrategy<br/>→ Trend 인스턴스 교체"])
+    TREND_FULL -->|아니오| END_NODE([주기 종료])
+    EROSION --> END_NODE
+
+    style OLLAMA_CALL stroke-dasharray: 5 5
+    style EROSION stroke-dasharray: 5 5
+    style SCHED fill:#e1f5ee
+    style CTX fill:#e1f5ee
 ```
 
 각 단계는 입력만 주면 결과가 결정되도록 짜여 있어 단계 사이에 부수 효과가 누적되지 않습니다. AI 호출과 DB 저장은 `analyzeAnomalies()` 단계에서만 일어나며, 같은 단계가 여러 번 호출되는 일은 없습니다.
@@ -839,7 +876,7 @@ PerformanceAnalysisPipelineContext (Step Builder)
 | 누적 분석 주기 길이 | `aipipeline.window.erosion-minutes` | 30분 |
 | 즉시 판정 주기 간격 | `aipipeline.scheduler.interval-minutes` | 1분 |
 
-[↩ status 결정 수식으로 돌아가기](#status-formula)
+[status 결정 수식으로 돌아가기](#status-formula)
 
 **baseline 산출 시점**
 
@@ -865,12 +902,12 @@ PerformanceMonitoringScheduler
   → AiAnalysisResultAdapter    // 분석 결과 + evidence 저장
 ```
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/adapter/AiAnalysisResultAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/adapter/AiAnalysisResultAdapter.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/scheduler/PerformanceMonitoringScheduler.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/PerformanceContextManager.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/pipeline/PerformanceAnalysisPipelineContext.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/context/strategy/CollapseDetectionStrategy.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/service/OllamaAnalysisService.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/adapter/AiAnalysisResultAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/ai/adapter/AiAnalysisResultAdapter.java)
 
 **AI 분석 결과 조회**
 
@@ -878,10 +915,10 @@ PerformanceMonitoringScheduler
 GET /ai/results?app_name= → AiResultController → AiResultAdapter → DB
 ```
 
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java)
-📎 [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/adapter/AiResultAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/adapter/AiResultAdapter.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/controller/AiResultController.java)
+- [`apiserver/src/main/java/com/apm/observatory/apiserver/ai/adapter/AiResultAdapter.java`](https://github.com/buss-sooin/apm-observatory/blob/main/apiserver/src/main/java/com/apm/observatory/apiserver/ai/adapter/AiResultAdapter.java)
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -1022,8 +1059,8 @@ logback이 `proxy.doAppend(event)`를 호출하면 `InvocationHandler`가 받아
 
 `--add-opens java.base/java.lang=ALL-UNNAMED` 옵션은 `defineClass()`를 직접 리플렉션으로 호출할 때 Java 9 이전 환경에서 모듈 시스템 제약을 우회하기 위해 필요합니다. 이 프로젝트는 Java 21에서 `ClassInjector.UsingReflection`을 사용했고 내부적으로 Java 버전별 모듈 제약을 처리해주기 때문에 별도로 추가하지 않았습니다.
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java)
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/appender/GrpcLogbackAppender.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
 
 ---
 
@@ -1097,11 +1134,11 @@ ClassLoader가 클래스를 찾을 때의 의존성 방향을 고려해, agent�
 @Advice.OnMethodExit
 public static void onExit() {
         if (System.getProperty("apm.appender.registered") == null) {
-        System.setProperty("apm.appender.registered", "true");
-        registerGrpcAppender();
-        ClassLoaderDiagnostic.run();
+            System.setProperty("apm.appender.registered", "true");
+            registerGrpcAppender();
+            ClassLoaderDiagnostic.run();
         }
-        }
+}
 ```
 
 ---
@@ -1113,12 +1150,12 @@ ClassLoader 경계 시각에 매몰되어 있다가 `IllegalAccessError` 에러 
 ```java
 public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
-        if (appenderRegistered.compareAndSet(false, true)) {
-        registerGrpcAppender();
+if (appenderRegistered.compareAndSet(false, true)) {
+    registerGrpcAppender();
 }
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
+- [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
 
 ---
 
@@ -1149,7 +1186,7 @@ SystemClassLoader  : AppClassLoader
 PlatformClassLoader: PlatformClassLoader
 ```
 
-📎 [`agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java)
+- [`agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java)
 
 ---
 
@@ -1173,7 +1210,7 @@ PlatformClassLoader: PlatformClassLoader
 | ⑯ | FrameworkServlet 후킹 IllegalAccessError | Advice 인라인 시 private 메서드 접근 불가 | registerGrpcAppender() public으로 변경 |
 | ⑰ | TomcatEmbeddedWebappClassLoader 주입 실패 | getContextClassLoader()가 실제 logback ClassLoader가 아님 | LoggerFactory.getILoggerFactory()로 실제 ClassLoader 역추적 |
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -1204,7 +1241,7 @@ JPA Repository, Redis 발행, 외부 API 호출 같은 외부 의존 코드는 �
 class PerformanceCollapseEvaluatorTest { ... }
 ```
 
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java)
+- [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceCollapseEvaluatorTest.java)
 
 ---
 
@@ -1257,7 +1294,7 @@ spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
 
 이 절차는 메서드 단위로 닫혀 있고, `isSpanSlowed`와 `evaluate`도 같은 흐름으로 작성했습니다.
 
-📎 [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
+- [`aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/main/java/com/apm/observatory/aipipeline/analysis/evaluator/PerformanceCollapseEvaluator.java)
 
 ---
 
@@ -1269,12 +1306,12 @@ spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
 
 이 외에 `PromptBuildStrategy` 계열은 도구성 클래스(AI 프롬프트 빌더)로 분류해 같은 방식으로 테스트를 작성했습니다. 프롬프트 텍스트의 품질이 그대로 AI 응답 품질을 결정하기 때문에 입력 → 텍스트 결과를 명세로 두는 게 맞다고 봤습니다.
 
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java)
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java)
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java)
-📎 [`aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java)
+- [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/PerformanceErosionEvaluatorTest.java)
+- [`aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/evaluator/ExternalImpactEvaluatorTest.java)
+- [`aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/analyzer/PerformanceTrendTest.java)
+- [`aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java`](https://github.com/buss-sooin/apm-observatory/blob/main/aipipeline/src/test/java/com/apm/observatory/aipipeline/prompt/PromptBuildStrategyTest.java)
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ---
 
@@ -1322,7 +1359,7 @@ DB 두 종류(TimescaleDB, MySQL)가 함께 돌아가기 때문에 Docker 기본
 | 8083 | aipipeline (HTTP) |
 | 8084 | apiserver (HTTP) |
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ### 9-2. 최초 실행
 
@@ -1352,7 +1389,7 @@ docker compose ps
 상태입니다. `apm-ollama-init` 은 모델 다운로드 후 정상 종료되므로
 목록에 보이지 않아도 정상입니다.
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ### 9-3. 시연 시나리오
 
@@ -1454,7 +1491,7 @@ docker exec apm-postgres psql -U apm_user -d apm_db \
 중 하나)과 `ai_summary` 에 LLM이 생성한 요약 텍스트가 들어있으면 시연이
 정상 동작한 것입니다.
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ### 9-4. 시연 후 삭제 및 초기화
 
@@ -1491,7 +1528,7 @@ docker volume rm apm-observatory_mysql_data \
                  apm-observatory_redis_data
 ```
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
 
 ### 9-5. ClassLoaderDiagnostic 출력 확인
 
@@ -1520,6 +1557,6 @@ docker logs apm-targetappmvc | grep -A 30 "ClassLoader 계층 구조"
 > curl http://localhost:8080/combined
 > ```
 
-[↩ ClassLoaderDiagnostic 단락으로 돌아가기](#classloader-diagnostic)
+[ClassLoaderDiagnostic 단락으로 돌아가기](#classloader-diagnostic)
 
-[▲ 목차로](#목차)
+[목차로 돌아가기](#목차)
