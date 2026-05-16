@@ -22,15 +22,23 @@ APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 �
 
 ### 이 프로젝트의 AI 사용에 대해
 
-AI 코딩 방식은 큰 틀에서 세 단계로 변화해왔습니다. 한 번의 좋은 지시문을 짜는 데 집중하는 프롬프트 방식에서, 모델이 보는 컨텍스트 전체를 설계해 더 긴 작업을 안정적으로 끌고 가는 컨텍스트 방식으로, 다시 에이전트가 동작하는 환경 자체를 설계해 코드 생성과 검증을 자동화하는 하네스 방식으로 변화해왔습니다. 이 프로젝트는 APM이라는 도구가 어떻게 기능하는지 그 내부를 이해하기 위해 지식의 학습이 선행되어야 했고, 누적되는 질의응답을 토대로 프로젝트를 구성해 나가는 프롬프트 방식이 그 목적에 부합한다고 판단했습니다.
+JVM 내부 동작, 바이트코드 조작(Java Instrumentation), OpenTelemetry 사양 등 직접 다뤄본 적 없는 영역의 학습이 선행되어야 했습니다. 학습 없이는 무엇을 만들지조차 결정할 수 없었기 때문에 질의응답으로 이해를 먼저 쌓고, 그 위에서 설계를 의논하고 코드를 작성하는 순서로 진행했습니다. 학습량과 질문이 많아질수록 채팅 한 번에 담을 수 있는 한계를 넘어섰고, 채팅 간에 맥락을 잃지 않고 이어가는 것이 중요했습니다.
 
 | 항목 | 내용 |
 |---|---|
 | 모델 | Claude Sonnet 4.6, Claude Opus 4.7 |
-| 사용 방식 | 채팅 UI (claude.ai) |
-| 보조 도구 | 없음 |
+| 사용 환경 | 클로드 프로젝트 + 채팅 UI (claude.ai) |
+| 컨텍스트 관리 방식 | 프로젝트 지침 + 프로젝트 파일 + 세션 간 인계 노트(section) |
 
-프로젝트 소스코드 작성 자체는 모두 AI의 작업에 맡겼습니다. 다만 무엇을 만들지, 왜 그렇게 만들지, 나온 결과의 어디가 문제이고 그 문제를 풀려면 어떤 지식이 더 필요한지의 판단은 직접 했습니다. 학습이 선행되어야 하는 영역을 먼저 짚어 질의응답으로 이해를 쌓고, 그 위에서 설계를 의논하고, AI가 작성한 코드를 검수해 다음 방향을 정하는 과정이 반복됐습니다. 이 과정에서 추가로 필요한 지식의 학습과 질의응답이 자연스럽게 병행됐고, 코드 작성을 제외한 핵심 결정은 모두 저의 의사결정이었습니다.
+이 컨텍스트 관리 방식은 Anthropic이 정의한 [**컨텍스트 엔지니어링(Context Engineering)**](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)을 그대로 구현해놓은 클로드 프로젝트 환경에 맞춰 구성한 것입니다. 위 링크에서 컨텍스트 엔지니어링이 관리하는 세 영역 — *system instructions, external data, message history* — 이 표의 세 항목과 일치합니다.
+
+- **프로젝트 지침** — 코딩 철학, 설계·구현 접근, 응답 형식 등 매 채팅에 공통으로 적용될 작업 원칙을 등록.
+- **프로젝트 파일** — 채용 공고, 진단 커맨드셋 등 매 채팅에서 반복 참조되는 자료를 등록.
+- **세션 간 인계 노트(section)** — 채팅 종료 시점에 결정 사항·이월 항목·다음 작업을 정리해 파일로 저장하고, 다음 채팅 시작 시 다시 등록.
+
+코드는 모두 AI가 작성했고, 핵심 설계와 흐름은 직접 결정했습니다.
+
+이 프로젝트는 위와 같이 클로드가 제공하는 환경에서 작업했으며, 통상 하네스(agent harness)라 불리는 에이전트가 동작하는 환경(agent loop, tool interface, execution sandbox 등)은 다루지 않았습니다.
 
 **구현 범위**
 
@@ -1134,11 +1142,11 @@ ClassLoader가 클래스를 찾을 때의 의존성 방향을 고려해, agent�
 @Advice.OnMethodExit
 public static void onExit() {
         if (System.getProperty("apm.appender.registered") == null) {
-            System.setProperty("apm.appender.registered", "true");
-            registerGrpcAppender();
-            ClassLoaderDiagnostic.run();
+        System.setProperty("apm.appender.registered", "true");
+        registerGrpcAppender();
+        ClassLoaderDiagnostic.run();
         }
-}
+        }
 ```
 
 ---
@@ -1150,9 +1158,9 @@ ClassLoader 경계 시각에 매몰되어 있다가 `IllegalAccessError` 에러 
 ```java
 public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
-if (appenderRegistered.compareAndSet(false, true)) {
-    registerGrpcAppender();
-}
+        if (appenderRegistered.compareAndSet(false, true)) {
+        registerGrpcAppender();
+        }
 ```
 
 - [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
@@ -1265,7 +1273,7 @@ void cpu_급등시_SPIKED() {
         List<MetricsSnapshot> metrics = List.of(metricsSnapshot(60.0, 1000L, 8000L));
         assertThat(evaluator.isResourceSpiked(metrics, 15.0, 500.0, SPIKE_MULTIPLIER))
         .isEqualTo(ResourceStatus.SPIKED);
-}
+        }
 ```
 
 위 수식의 각 변수는 이 테스트 입력값과 다음과 같이 대응됩니다.
