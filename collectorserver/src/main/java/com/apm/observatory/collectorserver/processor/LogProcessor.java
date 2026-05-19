@@ -1,6 +1,6 @@
 package com.apm.observatory.collectorserver.processor;
 
-import com.apm.observatory.collectorserver.repository.LogRepository;
+import com.apm.observatory.collectorserver.processor.repository.LogRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;

@@ -18,7 +18,7 @@ public class SpanModel {
     public record WaterfallSpan(
             String spanId,
             String parentSpanId,
-            String spanType,        // INTERNAL / DB / EXTERNAL
+            String spanType,        // ROOT / INTERNAL / DB / EXTERNAL
             long startOffsetMs,     // root 시작 기준 상대 오프셋 = span.startTime - root.startTime
             long durationMs,
             int depth,              // 트리 깊이 (들여쓰기 표현용) root=0, 자식=1, 손자=2

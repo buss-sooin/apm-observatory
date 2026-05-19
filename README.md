@@ -98,7 +98,7 @@ Go는 언어 설계 자체가 경량 고루틴과 채널 기반 동시성을 내
 - Spring WebFlux
 - **Netty** ✓
 
-Spring MVC는 커넥션마다 스레드를 하나씩 점유하는 구조라 에이전트 수가 늘어날수록 스레드를 그만큼 소비한다는 구조적 문제가 있습니다. 개인 프로젝트 규모에서 실제로 스레드 고갈이 나는 상황을 재현하기는 어렵지만 구조적으로 맞지 않다고 판단했습니다. WebFlux도 같은 구조적 문제를 해결하는 방향으로 고려했지만, 에이전트가 100ms 배치로 묶어서 전송하고 Redis Streams가 버퍼를 담당하는 구조에서 WebFlux가 진짜 필요한 규모의 요구사항이 없었습니다. 개인 프로젝트 수준에서 Mono/Flux 기반으로 전환하는 복잡도를 감수할 이유가 없었고, gRPC 서버 자체가 Netty 위에서 동작하는 만큼 필요한 만큼만 직접 구현할 수 있는 Netty를 선택했습니다.
+게이트웨이는 인증·검증 후 수집서버에서 저장하기 알맞은 포맷으로 Redis Streams를 통해 전송하는 데 특화된 모듈입니다. 에이전트로부터 전송된 데이터를 비즈니스 로직 없이 Redis 계층으로 전송만 하기 때문에, 동시에 들어오는 많은 전송을 thread-per-request로 받는 Spring MVC 대신 많은 I/O bound 처리에 특화된 이벤트 루프 방식의 Netty 네트워크 서버와 Redis 전송만 구현할 수 있는 Lettuce를 사용해 구현했습니다. WebFlux도 도메인 로직이 따로 없는 이 모듈에는 프레임워크 단위 추상화까지 필요하지 않았습니다.
 
 ---
 
@@ -120,12 +120,11 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 
 ---
 
-**수집서버 처리 모델**
-- Tomcat + Spring MVC
-- Netty + Spring WebFlux
-- **Tomcat + Spring MVC + 스케줄러** ✓
+**수집서버 수신·저장 스택**
+- 논블로킹 비동기 (Netty 기반 WebFlux + 비동기 Redis/R2DBC)
+- **동기 블로킹 (Spring Data Redis + Spring Data JPA)** ✓
 
-Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Redis Streams를 주기적으로 폴링하고 DB에 저장하는 단순한 흐름이라 Spring의 `@Scheduled` 스케줄러로 충분하다고 판단했습니다.
+수집서버는 Redis Streams를 수신해 TimescaleDB에 적재하는 모듈입니다. Redis 수신과 이어지는 DB 저장을 익숙한 Spring 구조 안에서 일관되게 다루기 위해 Spring Data Redis와 Spring Data JPA를 택했습니다. Span의 종료 시점을 정확히 후킹하는 대신 Span 파생 계산으로 우회해 구현했기 때문에 TraceID 묶음의 종료 시점을 특정할 수 없고, 일정 시간 대기한 뒤 모인 데이터를 저장하는 동기 블로킹 방식을 택했습니다. Span을 정확히 후킹할 수 있고 더 많은 후킹 지점과 데이터 총량을 다루는 프로덕션 규모라면, 수신부터 저장까지 논블로킹 비동기로 통일하는 Netty 기반 WebFlux 스택을 택했을 것으로 생각합니다.
 
 ---
 

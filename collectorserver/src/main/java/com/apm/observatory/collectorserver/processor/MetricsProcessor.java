@@ -1,6 +1,6 @@
 package com.apm.observatory.collectorserver.processor;
 
-import com.apm.observatory.collectorserver.repository.MetricsRepository;
+import com.apm.observatory.collectorserver.processor.repository.MetricsRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

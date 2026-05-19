@@ -61,7 +61,7 @@ public class ServletAdvice {
                     .setSpanId(spanId != null ? spanId : UUID.randomUUID().toString())
                     .setAppName(AgentContext.getAppName() != null ? AgentContext.getAppName() : "")
                     .setHost(AgentContext.getHost() != null ? AgentContext.getHost() : "")
-                    .setSpanType("INTERNAL")
+                    .setSpanType("ROOT")
                     .setStartTime(startTime)
                     .setEndTime(endTime)
                     .setDurationMs(duration)
