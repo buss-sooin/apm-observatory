@@ -48,9 +48,8 @@ public class ServletAdvice {
             int status = (int) httpServletResponseClass
                     .getMethod("getStatus").invoke(response);
 
-            // 의도: healthcheck 경로는 tracing 제외
+            // 의도: healthcheck/probe 경로는 tracing 제외
             // docker healthcheck가 10초마다 호출하므로 span이 불필요하게 쌓임
-            // health/probe 경로는 tracing에서 제외하는 게 일반적인 방식임
             if ("/health".equals(url)) {
                 return;
             }

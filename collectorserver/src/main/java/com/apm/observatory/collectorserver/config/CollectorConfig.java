@@ -35,8 +35,19 @@ public final class CollectorConfig {
     // 폴링 대기 시간 (ms) — 큐가 비었을 때 블로킹 대기
     public static final long POLL_TIMEOUT_MS = 1000L;
 
-    // Span 수집 대기 타임아웃 (ms) — 30초
-    public static final long SPAN_TIMEOUT_MS = 30_000L;
+    // Trace 종료 판정 idle 임계 (ms)
+    // 한 trace의 마지막 span 도착 후 이 시간 동안 추가 도착이 없으면 종료로 판정한다.
+    // 값 산출 근거: read-timeout(3초) + consume polling 지연 최악(5초) + 안전 마진.
+    // 외부 호출 read-timeout으로 늦게 만들어진 EXTERNAL span이 collectorserver buffer에
+    // 도착하기까지의 지연을 흡수해야, 그 span을 같은 trace로 묶어 저장할 수 있다.
+    public static final long IDLE_THRESHOLD_MS = 10_000L;
+
+    // Trace 최대수명 상한 (ms)
+    // trace 생성 후 이 시간을 넘으면 idle 조건과 무관하게 강제 저장한다.
+    // 메모리 누수 방어 그물망. 정상 트래픽은 IDLE_THRESHOLD_MS로 먼저 끊기고
+    // 이 임계는 비정상(끝없이 span이 들어오는 케이스)에서만 발동한다.
+    // 값은 AWS ALB 기본 idle timeout 60초를 따른다.
+    public static final long MAX_LIFETIME_MS = 60_000L;
 
     // PEL 재시도 최대 횟수
     // 초과 시 DLQ Stream으로 이동 + 정상 PEL에서 ACK 제거

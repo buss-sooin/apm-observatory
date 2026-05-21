@@ -1,5 +1,7 @@
 package com.apm.observatory.collectorserver.processor.adapter;
 
+import com.apm.observatory.collectorserver.processor.Span;
+import com.apm.observatory.collectorserver.processor.SpanType;
 import com.apm.observatory.collectorserver.processor.TraceAssembler;
 import org.springframework.stereotype.Component;
 

@@ -1,4 +1,4 @@
-package com.apm.observatory.collectorserver.processor.adapter;
+package com.apm.observatory.collectorserver.processor;
 
 /**
  * span의 분류. collectorserver 단일 모듈 안에서만 참조되는 타입이다.

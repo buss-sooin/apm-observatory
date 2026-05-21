@@ -1,4 +1,4 @@
-package com.apm.observatory.collectorserver.processor.adapter;
+package com.apm.observatory.collectorserver.processor;
 
 /**
  * 트레이스 조립에 쓰이는 span의 도메인 표현.

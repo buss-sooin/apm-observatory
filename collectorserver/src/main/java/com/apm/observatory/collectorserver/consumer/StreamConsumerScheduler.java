@@ -19,9 +19,11 @@ public class StreamConsumerScheduler {
         provider.getAll().forEach(AbstractStreamConsumer::consume);
     }
 
-    // 30초마다 타임아웃된 TraceID 처리
+    // 10초마다 종료 판정 대상 TraceID 처리
     // SpanConsumer만 실제 동작, 나머지는 no-op
-    @Scheduled(fixedDelay = 30000)
+    // 값은 CollectorConfig.IDLE_THRESHOLD_MS(10초)와 동일하게 유지한다.
+    // (@Scheduled는 컴파일 시점 상수만 허용해 직접 참조 불가)
+    @Scheduled(fixedDelay = 10000)
     public void flushExpired() {
         provider.getAll().forEach(AbstractStreamConsumer::flushExpired);
     }

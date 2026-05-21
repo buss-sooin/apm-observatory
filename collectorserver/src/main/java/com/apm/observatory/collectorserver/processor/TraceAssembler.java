@@ -1,6 +1,5 @@
 package com.apm.observatory.collectorserver.processor;
 
-import com.apm.observatory.collectorserver.processor.adapter.Span;
 import org.springframework.stereotype.Component;
 
 import java.util.List;

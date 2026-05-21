@@ -1,7 +1,5 @@
 package com.apm.observatory.collectorserver.processor;
 
-import com.apm.observatory.collectorserver.processor.adapter.Span;
-import com.apm.observatory.collectorserver.processor.adapter.SpanType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

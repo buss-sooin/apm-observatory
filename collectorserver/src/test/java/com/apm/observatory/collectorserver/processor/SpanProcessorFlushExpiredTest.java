@@ -1,0 +1,219 @@
+package com.apm.observatory.collectorserver.processor;
+
+import com.apm.observatory.collectorserver.processor.adapter.SpanIngestionAdapter;
+import com.apm.observatory.collectorserver.processor.repository.SpanRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * SpanProcessor.flushExpired의 trace 종료 판정 명세.
+ *
+ * <p>idle 방식: 마지막 span 도착 후 10초간 추가 도착이 없으면 trace 종료.
+ * 최대수명 상한: trace 생성 후 60초를 넘으면 idle 조건과 무관하게 강제 저장.
+ *
+ * <p>ROOT span 누락 정책은 본 명세에서 검증한다. idle/최대수명 조건 만족 후에도
+ * ROOT가 없으면 드롭한다. 본 작업 범위는 idle 방식 도입에 한정하므로 기존 정책 유지.
+ */
+@DisplayName("SpanProcessor.flushExpired — trace 종료 판정")
+class SpanProcessorFlushExpiredTest {
+
+    private static final long IDLE_THRESHOLD_MS = 10_000L;
+    private static final long MAX_LIFETIME_MS = 60_000L;
+    private static final long BASE_TIME_MS = 1_000_000_000L;
+
+    private SpanRepository spanRepository;
+    private SpanIngestionAdapter spanIngestionAdapter;
+    private FakeClock clock;
+    private SpanProcessor processor;
+
+    @BeforeEach
+    void setUp() {
+        spanRepository = mock(SpanRepository.class);
+        spanIngestionAdapter = mock(SpanIngestionAdapter.class);
+        clock = new FakeClock(BASE_TIME_MS);
+
+        // assemble의 반환은 본 테스트의 검증 대상이 아니다. SpanProcessor가 saveAll을
+        // 호출하려면 batchParams.isEmpty()가 false이기만 하면 되므로 빈 배열 한 개를
+        // 담은 리스트로 충분하다. List.of(E... elements)는 varargs라서 new Object[0]을
+        // 넘길 때 "배열을 풀어헤쳐 빈 리스트로 본다(E=Object)"와 "배열 한 개를 담은
+        // 리스트로 본다(E=Object[])" 사이가 양가적이고, 자바 추론은 인자 표현식에서
+        // 도출된 결정을 좌변 타입보다 우선해 해석 A로 가버린다. singletonList(T o)는
+        // varargs가 아니라 단일 인자라 이 양가성 자체가 없다.
+        when(spanIngestionAdapter.assemble(anyList()))
+                .thenReturn(Collections.singletonList(new Object[0]));
+
+        processor = SpanProcessor.newInstance(spanRepository, spanIngestionAdapter, clock);
+    }
+
+    @Test
+    @DisplayName("마지막 span 도착 후 idle 임계 시간이 지나면 trace를 저장한다")
+    void savesTraceWhenIdleThresholdExceeded() {
+        processor.process(List.of(rootSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        processor.flushExpired();
+
+        verify(spanRepository, times(1)).saveAll(anyList());
+    }
+
+    @Test
+    @DisplayName("마지막 span 도착 후 idle 임계 시간이 지나지 않았으면 trace를 buffer에 유지한다")
+    void retainsTraceWhenIdleThresholdNotReached() {
+        processor.process(List.of(rootSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS - 1);
+        processor.flushExpired();
+
+        verify(spanRepository, never()).saveAll(anyList());
+        assertThat(processor.contains("trace-A")).isTrue();
+    }
+
+    @Test
+    @DisplayName("새 span 도착으로 lastUpdatedAt이 갱신되면 idle 임계 계산은 다시 시작된다")
+    void idleThresholdRestartsWhenNewSpanArrives() {
+        processor.process(List.of(childSpan("trace-A")));
+        clock.advance(IDLE_THRESHOLD_MS - 1_000);
+
+        processor.process(List.of(rootSpan("trace-A")));
+        clock.advance(IDLE_THRESHOLD_MS - 1);
+
+        processor.flushExpired();
+
+        verify(spanRepository, never()).saveAll(anyList());
+        assertThat(processor.contains("trace-A")).isTrue();
+    }
+
+    @Test
+    @DisplayName("trace 생성 후 최대수명 상한이 지나면 idle 조건과 무관하게 trace를 저장한다")
+    void savesTraceWhenMaxLifetimeExceededRegardlessOfIdle() {
+        processor.process(List.of(rootSpan("trace-A")));
+
+        for (int i = 0; i < 12; i++) {
+            clock.advance(5_000);
+            processor.process(List.of(childSpan("trace-A")));
+        }
+
+        clock.advance(1);
+        processor.flushExpired();
+
+        verify(spanRepository, times(1)).saveAll(anyList());
+    }
+
+    @Test
+    @DisplayName("idle 조건도 최대수명 상한도 만족하지 않으면 trace를 buffer에 유지한다")
+    void retainsTraceWhenNeitherConditionMet() {
+        processor.process(List.of(rootSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS - 1);
+        processor.flushExpired();
+
+        verify(spanRepository, never()).saveAll(anyList());
+        assertThat(processor.contains("trace-A")).isTrue();
+    }
+
+    @Test
+    @DisplayName("저장된 trace는 buffer에서 제거된다")
+    void removesSavedTraceFromBuffer() {
+        processor.process(List.of(rootSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        processor.flushExpired();
+
+        assertThat(processor.contains("trace-A")).isFalse();
+        assertThat(processor.bufferedTraceCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("ROOT span이 있는 trace는 idle 조건 만족 시 저장된다")
+    void savesTraceWithRootWhenIdle() {
+        processor.process(List.of(childSpan("trace-A"), rootSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        processor.flushExpired();
+
+        verify(spanRepository, times(1)).saveAll(anyList());
+    }
+
+    @Test
+    @DisplayName("ROOT span이 없는 trace는 idle 조건 만족해도 드롭되고 저장되지 않는다")
+    void dropsTraceWithoutRootEvenWhenIdle() {
+        processor.process(List.of(childSpan("trace-A")));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        processor.flushExpired();
+
+        verify(spanRepository, never()).saveAll(anyList());
+        assertThat(processor.contains("trace-A")).isFalse();
+    }
+
+    // ===== 테스트 헬퍼 =====
+
+    private static Map<String, String> rootSpan(String traceId) {
+        Map<String, String> m = new HashMap<>();
+        m.put("trace_id", traceId);
+        m.put("span_id", "root-" + traceId);
+        m.put("parent_span_id", "");
+        return m;
+    }
+
+    private static Map<String, String> childSpan(String traceId) {
+        Map<String, String> m = new HashMap<>();
+        m.put("trace_id", traceId);
+        m.put("span_id", "child-" + traceId + "-" + System.nanoTime());
+        m.put("parent_span_id", "root-" + traceId);
+        return m;
+    }
+
+    /**
+     * 테스트용 가짜 Clock. advance(millis)로 시간을 강제 이동.
+     */
+    static class FakeClock extends Clock {
+        private long currentMillis;
+
+        FakeClock(long startMillis) {
+            this.currentMillis = startMillis;
+        }
+
+        void advance(long millis) {
+            this.currentMillis += millis;
+        }
+
+        @Override
+        public long millis() {
+            return currentMillis;
+        }
+
+        @Override
+        public Instant instant() {
+            return Instant.ofEpochMilli(currentMillis);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.systemDefault();
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+    }
+
+}
