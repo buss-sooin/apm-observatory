@@ -3,7 +3,9 @@ package com.apm.observatory.collectorserver.processor;
 import com.apm.observatory.collectorserver.config.CollectorConfig;
 import com.apm.observatory.collectorserver.processor.adapter.SpanIngestionAdapter;
 import com.apm.observatory.collectorserver.processor.repository.SpanRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -28,6 +30,22 @@ import java.util.concurrent.ConcurrentHashMap;
  *       idle 조건과 무관하게 강제 저장. 끝없이 span이 들어오는 비정상 케이스 방어.
  * </ul>
  *
+ * <h2>buffer 누수 방어와 DLQ 흐름</h2>
+ *
+ * <p>buffer는 인메모리 ConcurrentHashMap으로 유지되므로 누적되면 JVM 메모리 누수가 된다.
+ * 종료 판정 통과 후 어떤 결과가 나오든 buffer에서 즉시 제거하는 원칙을 둔다.
+ *
+ * <ul>
+ *   <li>saveAll 성공 → recordIds를 FlushResult.toAcknowledge에 담고 buffer에서 제거</li>
+ *   <li>saveAll 실패 → spans와 recordIds를 DeadLetterEntry(reason=SAVE_FAILED)로 묶어
+ *       FlushResult.toDeadLetter에 담고 buffer에서 제거</li>
+ *   <li>ROOT 부재 → spans와 recordIds를 DeadLetterEntry(reason=ROOT_MISSING)로 묶어
+ *       FlushResult.toDeadLetter에 담고 buffer에서 제거</li>
+ * </ul>
+ *
+ * <p>flushExpired의 반환 FlushResult를 받은 SpanConsumer가 acknowledge와 DLQ 이동을
+ * 실제로 수행한다. 이 클래스는 Redis 자체를 알지 않고 도메인 판정과 buffer 관리만 책임진다.
+ *
  * <p>traceBuffers는 두 스레드가 동시에 접근한다. span을 쌓는 Consumer 스레드와
  * 타임아웃을 검사·제거하는 스케줄러 스레드다. 이 동시 접근 때문에
  * {@link java.util.concurrent.ConcurrentHashMap}을 쓴다.
@@ -39,6 +57,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @see SpanIngestionAdapter 모은 span을 트레이스 계층으로 조립하는 인프라 경계
  */
+@Slf4j
 @Component
 public class SpanProcessor {
 
@@ -92,45 +111,77 @@ public class SpanProcessor {
         this.clock = clock;
     }
 
-    public void process(List<Map<String, String>> messages) {
-        if (messages.isEmpty()) return;
+    /**
+     * 도착한 span을 traceId별 buffer에 쌓는다. 종료 판정과 저장은 하지 않는다.
+     *
+     * @param items 한 폴링에서 받은 span 묶음. 각 IncomingSpan은 컬럼 매핑과 Redis recordId를 함께 들고 있다
+     */
+    public void process(List<IncomingSpan> items) {
+        if (items.isEmpty()) return;
 
         long now = clock.millis();
-        for (Map<String, String> m : messages) {
-            String traceId = m.get("trace_id");
-            traceBuffers.computeIfAbsent(traceId, k -> new TraceBuffer(now)).add(m, now);
+        for (IncomingSpan item : items) {
+            String traceId = item.raw().get("trace_id");
+            traceBuffers.computeIfAbsent(traceId, k -> new TraceBuffer(now))
+                    .add(item.raw(), item.recordId(), now);
         }
     }
 
-    // 스케줄러가 주기적으로 호출 — 종료 판정 대상 trace 처리
-    public void flushExpired() {
+    /**
+     * 종료 판정 통과한 trace들을 처리하고 acknowledge 대상과 DLQ 이동 대상을 묶어 반환한다.
+     *
+     * <p>trace 단위로 try/catch 격리하여 한 trace의 saveAll 실패가 다른 trace 처리에
+     * 영향을 주지 않는다. 종료 판정 통과 후 어떤 결과(성공/실패/ROOT 부재)든 buffer에서
+     * 즉시 제거되어 누수 위험이 없다.
+     *
+     * @return acknowledge 대상 recordId 모음과 DLQ 이동 대상 entry 모음
+     */
+    public FlushResult flushExpired() {
         long now = clock.millis();
+        List<RecordId> toAck = new ArrayList<>();
+        List<DeadLetterEntry> toDlq = new ArrayList<>();
 
         traceBuffers.forEach((traceId, buffer) -> {
             boolean idleExceeded = now - buffer.lastUpdatedAt >= CollectorConfig.IDLE_THRESHOLD_MS;
             boolean maxLifetimeExceeded = now - buffer.createdAt >= CollectorConfig.MAX_LIFETIME_MS;
             if (!idleExceeded && !maxLifetimeExceeded) return;
 
-            List<Map<String, String>> spans = buffer.spans;
-
-            // ROOT span 누락 검사. ROOT는 구조적으로 가장 늦게 도착하므로 종료 판정
-            // 시점까지 안 왔다면 에이전트 전송 실패 또는 큐 드롭으로 판단해 통째로 드롭한다.
-            // 본 변경의 범위는 idle 방식 도입에 한정하므로 기존 정책을 유지한다.
-            // 불완전 표시 등의 발전 방향은 별개 작업으로 분리한다.
-            boolean rootMissing = spans.stream()
+            boolean rootMissing = buffer.spans.stream()
                     .noneMatch(s -> s.get("parent_span_id") == null
                             || s.get("parent_span_id").isEmpty());
             if (rootMissing) {
+                toDlq.add(new DeadLetterEntry(
+                        List.copyOf(buffer.recordIds),
+                        List.copyOf(buffer.spans),
+                        "ROOT_MISSING"
+                ));
                 traceBuffers.remove(traceId);
+                log.warn("ROOT 부재 trace DLQ 이동: {} (span {}건)",
+                        traceId, buffer.spans.size());
                 return;
             }
 
-            List<Object[]> batchParams = spanIngestionAdapter.assemble(spans);
-            if (!batchParams.isEmpty()) {
-                spanRepository.saveAll(batchParams);
+            try {
+                List<Object[]> batchParams = spanIngestionAdapter.assemble(buffer.spans);
+                if (!batchParams.isEmpty()) {
+                    spanRepository.saveAll(batchParams);
+                }
+                toAck.addAll(buffer.recordIds);
+                traceBuffers.remove(traceId);
+                log.info("trace 저장 완료: {} (span {}건, ACK {}건)",
+                        traceId, buffer.spans.size(), buffer.recordIds.size());
+            } catch (Exception e) {
+                toDlq.add(new DeadLetterEntry(
+                        List.copyOf(buffer.recordIds),
+                        List.copyOf(buffer.spans),
+                        "SAVE_FAILED: " + e.getMessage()
+                ));
+                traceBuffers.remove(traceId);
+                log.error("trace 저장 실패 DLQ 이동: {} - {}", traceId, e.getMessage());
             }
-            traceBuffers.remove(traceId);
         });
+
+        return new FlushResult(toAck, toDlq);
     }
 
     /**
@@ -164,9 +215,13 @@ public class SpanProcessor {
      *
      * <p>lastUpdatedAt은 add 호출 시마다 갱신되어 idle 판정의 기준이 된다. createdAt은
      * 최초 생성 시각으로 고정되어 최대수명 상한 판정의 기준이 된다.
+     *
+     * <p>recordIds는 spans와 같은 순서로 적재되며, flushExpired가 종료 판정 결과에 따라
+     * acknowledge 대상 또는 DLQ 이동 대상으로 분류한다.
      */
     private static class TraceBuffer {
         final List<Map<String, String>> spans = new ArrayList<>();
+        final List<RecordId> recordIds = new ArrayList<>();
         final long createdAt;
         volatile long lastUpdatedAt;
 
@@ -175,8 +230,9 @@ public class SpanProcessor {
             this.lastUpdatedAt = now;
         }
 
-        void add(Map<String, String> span, long now) {
+        void add(Map<String, String> span, RecordId recordId, long now) {
             spans.add(span);
+            recordIds.add(recordId);
             lastUpdatedAt = now;
         }
     }

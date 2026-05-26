@@ -5,6 +5,7 @@ import com.apm.observatory.collectorserver.processor.repository.SpanRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.stream.RecordId;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -13,9 +14,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -23,25 +26,31 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * SpanProcessor.flushExpired의 trace 종료 판정 명세.
+ * SpanProcessor.flushExpired의 trace 종료 판정과 처리 결과 명세.
  *
  * <p>idle 방식: 마지막 span 도착 후 10초간 추가 도착이 없으면 trace 종료.
  * 최대수명 상한: trace 생성 후 60초를 넘으면 idle 조건과 무관하게 강제 저장.
  *
- * <p>ROOT span 누락 정책은 본 명세에서 검증한다. idle/최대수명 조건 만족 후에도
- * ROOT가 없으면 드롭한다. 본 작업 범위는 idle 방식 도입에 한정하므로 기존 정책 유지.
+ * <p>종료 판정 통과 후 세 갈래로 분기한다.
+ * <ul>
+ *   <li>정상 저장: saveAll 성공 → toAcknowledge에 recordId 추가</li>
+ *   <li>saveAll 실패: spans와 recordIds를 DeadLetterEntry(reason=SAVE_FAILED)로 toDeadLetter에 추가</li>
+ *   <li>ROOT 부재: spans와 recordIds를 DeadLetterEntry(reason=ROOT_MISSING)로 toDeadLetter에 추가</li>
+ * </ul>
+ *
+ * <p>모든 경로에서 종료 판정 통과한 trace는 buffer에서 즉시 제거되어 누수가 없다.
  */
-@DisplayName("SpanProcessor.flushExpired — trace 종료 판정")
+@DisplayName("SpanProcessor.flushExpired — trace 종료 판정과 처리 결과")
 class SpanProcessorFlushExpiredTest {
 
     private static final long IDLE_THRESHOLD_MS = 10_000L;
-    private static final long MAX_LIFETIME_MS = 60_000L;
     private static final long BASE_TIME_MS = 1_000_000_000L;
 
     private SpanRepository spanRepository;
     private SpanIngestionAdapter spanIngestionAdapter;
     private FakeClock clock;
     private SpanProcessor processor;
+    private final AtomicLong recordIdCounter = new AtomicLong(1);
 
     @BeforeEach
     void setUp() {
@@ -152,33 +161,104 @@ class SpanProcessorFlushExpiredTest {
     }
 
     @Test
-    @DisplayName("ROOT span이 없는 trace는 idle 조건 만족해도 드롭되고 저장되지 않는다")
-    void dropsTraceWithoutRootEvenWhenIdle() {
-        processor.process(List.of(childSpan("trace-A")));
+    @DisplayName("저장 성공한 trace의 recordId는 toAcknowledge에 담겨 반환된다")
+    void returnsRecordIdsOfSavedTraceInToAcknowledge() {
+        IncomingSpan root = rootSpan("trace-A");
+        processor.process(List.of(root));
 
         clock.advance(IDLE_THRESHOLD_MS);
-        processor.flushExpired();
+        FlushResult result = processor.flushExpired();
+
+        assertThat(result.toAcknowledge()).containsExactly(root.recordId());
+        assertThat(result.toDeadLetter()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ROOT 부재 trace는 toDeadLetter에 ROOT_MISSING reason으로 담기고 buffer에서 제거된다")
+    void movesRootMissingTraceToDeadLetterAndRemovesFromBuffer() {
+        IncomingSpan child = childSpan("trace-A");
+        processor.process(List.of(child));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        FlushResult result = processor.flushExpired();
 
         verify(spanRepository, never()).saveAll(anyList());
         assertThat(processor.contains("trace-A")).isFalse();
+
+        assertThat(result.toAcknowledge()).isEmpty();
+        assertThat(result.toDeadLetter()).hasSize(1);
+        DeadLetterEntry entry = result.toDeadLetter().get(0);
+        assertThat(entry.reason()).isEqualTo("ROOT_MISSING");
+        assertThat(entry.recordIds()).containsExactly(child.recordId());
+        assertThat(entry.spans()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("saveAll 실패한 trace는 toDeadLetter에 SAVE_FAILED reason으로 담기고 buffer에서 제거된다")
+    void movesSaveFailedTraceToDeadLetterAndRemovesFromBuffer() {
+        doThrow(new RuntimeException("DB 제약 위반"))
+                .when(spanRepository).saveAll(anyList());
+
+        IncomingSpan root = rootSpan("trace-A");
+        IncomingSpan child = childSpan("trace-A");
+        processor.process(List.of(root, child));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        FlushResult result = processor.flushExpired();
+
+        assertThat(processor.contains("trace-A")).isFalse();
+
+        assertThat(result.toAcknowledge()).isEmpty();
+        assertThat(result.toDeadLetter()).hasSize(1);
+        DeadLetterEntry entry = result.toDeadLetter().get(0);
+        assertThat(entry.reason()).startsWith("SAVE_FAILED:");
+        assertThat(entry.reason()).contains("DB 제약 위반");
+        assertThat(entry.recordIds()).containsExactly(root.recordId(), child.recordId());
+        assertThat(entry.spans()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("한 trace의 saveAll 실패가 다른 trace 처리에 영향을 주지 않는다")
+    void saveFailureOfOneTraceDoesNotAffectAnother() {
+        // 첫 호출은 실패, 두 번째 호출은 성공
+        doThrow(new RuntimeException("일시 실패"))
+                .doNothing()
+                .when(spanRepository).saveAll(anyList());
+
+        IncomingSpan rootA = rootSpan("trace-A");
+        IncomingSpan rootB = rootSpan("trace-B");
+        processor.process(List.of(rootA));
+        processor.process(List.of(rootB));
+
+        clock.advance(IDLE_THRESHOLD_MS);
+        FlushResult result = processor.flushExpired();
+
+        // 한 trace는 정상 ACK, 한 trace는 DLQ. 둘 다 buffer에서 제거
+        assertThat(processor.bufferedTraceCount()).isZero();
+        assertThat(result.toAcknowledge()).hasSize(1);
+        assertThat(result.toDeadLetter()).hasSize(1);
     }
 
     // ===== 테스트 헬퍼 =====
 
-    private static Map<String, String> rootSpan(String traceId) {
+    private IncomingSpan rootSpan(String traceId) {
         Map<String, String> m = new HashMap<>();
         m.put("trace_id", traceId);
         m.put("span_id", "root-" + traceId);
         m.put("parent_span_id", "");
-        return m;
+        return new IncomingSpan(m, nextRecordId());
     }
 
-    private static Map<String, String> childSpan(String traceId) {
+    private IncomingSpan childSpan(String traceId) {
         Map<String, String> m = new HashMap<>();
         m.put("trace_id", traceId);
         m.put("span_id", "child-" + traceId + "-" + System.nanoTime());
         m.put("parent_span_id", "root-" + traceId);
-        return m;
+        return new IncomingSpan(m, nextRecordId());
+    }
+
+    private RecordId nextRecordId() {
+        return RecordId.of(recordIdCounter.getAndIncrement() + "-0");
     }
 
     /**
