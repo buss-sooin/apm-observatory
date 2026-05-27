@@ -1,5 +1,6 @@
 package com.apm.observatory.collectorserver.processor;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.List;
  * 분리했다. process는 이 클래스를 호출만 하여 결합을 느슨하게 두고, 가공에 필요한
  * 역할은 이 클래스 안에 모아 응집을 높인다.
  */
+@Slf4j
 @Component
 public class TraceAssembler {
 
@@ -32,15 +34,29 @@ public class TraceAssembler {
      * 보고 0으로 막는다. 자식 판별은 span_type 문자열이 아니라 트리 관계
      * (parentSpanId == root.spanId)로만 하므로, 타입을 모르는 자식도 차감에 포함된다.
      *
+     * <p>음수 발생 시 0으로 클램핑하기 직전에 log.warn을 남긴다. 깊이 3 이상의 동기
+     * 호출이 평탄화돼 저장되면 자식 시간 구간이 중복 계상되어 합집합이 아닌 단순 합
+     * 산식에서 음수가 발생한다. 음수는 처리 자체로는 0이지만, 후속 union 산식 도입
+     * 여부를 판단할 단서로 의미가 있어 traceId와 측정값을 함께 기록한다.
+     *
+     * @param traceId        진단 로그 추적용 trace 식별자
      * @param root           부모가 없는 ROOT span
      * @param directChildren ROOT의 직속 자식 span 목록(parentSpanId == root.spanId)
      * @return INTERNAL duration(ms), 0 이상
      */
-    public long calculateInternalDuration(Span root, List<Span> directChildren) {
+    public long calculateInternalDuration(String traceId, Span root, List<Span> directChildren) {
         long childrenSum = directChildren.stream()
                 .mapToLong(Span::durationMs)
                 .sum();
-        return Math.max(0L, root.durationMs() - childrenSum);
+        long raw = root.durationMs() - childrenSum;
+
+        if (raw < 0L) {
+            log.warn("계산식1 음수 감지: trace_id={}, root.duration={}ms, 자식 합={}ms, 자식 수={}개"
+                            + " — union 산식 미적용 상태에서 평탄화된 중첩 호출이 원인일 가능성. 0으로 클램핑 후 저장.",
+                    traceId, root.durationMs(), childrenSum, directChildren.size());
+        }
+
+        return Math.max(0L, raw);
     }
 
 }

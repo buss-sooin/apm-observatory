@@ -3,6 +3,7 @@ package com.apm.observatory.collectorserver.processor.adapter;
 import com.apm.observatory.collectorserver.processor.Span;
 import com.apm.observatory.collectorserver.processor.SpanType;
 import com.apm.observatory.collectorserver.processor.TraceAssembler;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.Map;
  * 위임한다. 가공이 먼저, 그 안에서 계산이 호출되는 선후관계를 이 분리가
  * 코드 구조로 드러낸다.
  */
+@Slf4j
 @Component
 public class SpanIngestionAdapter {
 
@@ -50,10 +52,12 @@ public class SpanIngestionAdapter {
         }
 
         // Map → 도메인 Span(트리 조립에 필요한 4필드만) → 트리 조립
+        // trace_id는 같은 트레이스이므로 첫 항목에서 추출해 진단 로그용으로 buildTraceSpans에 전달
+        String traceId = rawSpans.isEmpty() ? null : rawSpans.get(0).get("trace_id");
         List<Span> domainSpans = rawSpans.stream()
                 .map(this::toSpan)
                 .toList();
-        List<Span> assembled = buildTraceSpans(domainSpans);
+        List<Span> assembled = buildTraceSpans(traceId, domainSpans);
 
         // 조립으로 새로 생긴 INTERNAL만 Object[]로 추가.
         // 원본 span은 위에서 이미 변환했으므로, buildTraceSpans가 더한 INTERNAL만 가려낸다.
@@ -66,15 +70,27 @@ public class SpanIngestionAdapter {
 
     // Map → 도메인 Span. 트리 조립 판단에 필요한 4필드만 추출한다.
     // parent_span_id의 빈 문자열은 null로 정규화해 ROOT 식별을 일치시킨다.
+    // 변환 결과가 UNKNOWN이면 외부 경계에서 들어온 값이 enum에 없거나 null인 경우이므로
+    // 진단 로그를 남긴다. 식별자(trace_id, span_id)와 원본 raw 값을 함께 기록해 출처를 추적한다.
     private Span toSpan(Map<String, String> s) {
         String parent = s.get("parent_span_id");
+
         if (parent != null && parent.isEmpty()) {
             parent = null;
         }
+
+        String rawType = s.get("span_type");
+        SpanType type = toSpanType(rawType);
+
+        if (type == SpanType.UNKNOWN) {
+            log.warn("UNKNOWN span_type 감지: trace_id={}, span_id={}, raw span_type={}",
+                    s.get("trace_id"), s.get("span_id"), rawType);
+        }
+
         return new Span(
                 s.get("span_id"),
                 parent,
-                toSpanType(s.get("span_type")),
+                type,
                 parseLong(s.get("duration_ms"))
         );
     }
@@ -156,10 +172,12 @@ public class SpanIngestionAdapter {
      * ROOT가 없으면 INTERNAL을 만들 수 없으므로 원본을 그대로 반환한다. ROOT 부재를
      * 불완전으로 표시·저장하는 처리는 계산식 3의 범위이며 이 메서드 밖이다.
      *
-     * @param spans 한 트레이스로 모인 도메인 Span 목록
+     * @param traceId 진단 로그 추적용 trace 식별자. {@link TraceAssembler}의 음수 감지
+     *                로그에 그대로 전달된다
+     * @param spans   한 트레이스로 모인 도메인 Span 목록
      * @return 원본 전체 + 파생 INTERNAL(ROOT 존재 시)
      */
-    List<Span> buildTraceSpans(List<Span> spans) {
+    List<Span> buildTraceSpans(String traceId, List<Span> spans) {
         Span root = spans.stream()
                 .filter(s -> s.parentSpanId() == null)
                 .findFirst()
@@ -174,7 +192,7 @@ public class SpanIngestionAdapter {
                 .toList();
 
         long internalDuration =
-                traceAssembler.calculateInternalDuration(root, directChildren);
+                traceAssembler.calculateInternalDuration(traceId, root, directChildren);
 
         Span internal = new Span(
                 java.util.UUID.randomUUID().toString(),

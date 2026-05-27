@@ -23,7 +23,7 @@ class SpanIngestionAdapterTest {
         Span db = new Span("db-1", "root-1", SpanType.DB, 30L);
         Span ext = new Span("ext-1", "root-1", SpanType.EXTERNAL, 20L);
 
-        List<Span> result = adapter.buildTraceSpans(List.of(root, db, ext));
+        List<Span> result = adapter.buildTraceSpans("trace-1", List.of(root, db, ext));
 
         assertThat(result).contains(root, db, ext);
 
@@ -40,7 +40,7 @@ class SpanIngestionAdapterTest {
     void internalEqualsRootWhenNoChildren() {
         Span root = new Span("root-1", null, SpanType.ROOT, 80L);
 
-        List<Span> result = adapter.buildTraceSpans(List.of(root));
+        List<Span> result = adapter.buildTraceSpans("trace-1", List.of(root));
 
         Span internal = result.stream()
                 .filter(s -> s.spanType() == SpanType.INTERNAL)
@@ -55,7 +55,7 @@ class SpanIngestionAdapterTest {
         Span db = new Span("db-1", "root-x", SpanType.DB, 30L);
         Span ext = new Span("ext-1", "root-x", SpanType.EXTERNAL, 20L);
 
-        List<Span> result = adapter.buildTraceSpans(List.of(db, ext));
+        List<Span> result = adapter.buildTraceSpans("trace-1", List.of(db, ext));
 
         assertThat(result).containsExactlyInAnyOrder(db, ext);
         assertThat(result).noneMatch(s -> s.spanType() == SpanType.INTERNAL);

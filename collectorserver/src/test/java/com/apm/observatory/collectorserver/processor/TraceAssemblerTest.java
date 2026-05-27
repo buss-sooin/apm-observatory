@@ -17,7 +17,7 @@ class TraceAssemblerTest {
     void internalEqualsRootWhenNoChildren() {
         Span root = new Span("root-1", null, SpanType.ROOT, 100L);
 
-        long internal = assembler.calculateInternalDuration(root, List.of());
+        long internal = assembler.calculateInternalDuration("trace-1", root, List.of());
 
         assertThat(internal).isEqualTo(100L);
     }
@@ -31,7 +31,7 @@ class TraceAssemblerTest {
                 new Span("child-ext", "root-1", SpanType.EXTERNAL, 20L)
         );
 
-        long internal = assembler.calculateInternalDuration(root, children);
+        long internal = assembler.calculateInternalDuration("trace-1", root, children);
 
         assertThat(internal).isEqualTo(50L);
     }
@@ -45,7 +45,7 @@ class TraceAssemblerTest {
                 new Span("child-ext", "root-1", SpanType.EXTERNAL, 20L)
         );
 
-        long internal = assembler.calculateInternalDuration(root, children);
+        long internal = assembler.calculateInternalDuration("trace-1", root, children);
 
         assertThat(internal).isZero();
     }
@@ -59,7 +59,7 @@ class TraceAssemblerTest {
                 new Span("child-unknown", "root-1", SpanType.UNKNOWN, 25L)
         );
 
-        long internal = assembler.calculateInternalDuration(root, children);
+        long internal = assembler.calculateInternalDuration("trace-1", root, children);
 
         assertThat(internal).isEqualTo(45L);
     }

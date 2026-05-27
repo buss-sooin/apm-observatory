@@ -142,8 +142,10 @@ public class SpanProcessor {
         List<DeadLetterEntry> toDlq = new ArrayList<>();
 
         traceBuffers.forEach((traceId, buffer) -> {
-            boolean idleExceeded = now - buffer.lastUpdatedAt >= CollectorConfig.IDLE_THRESHOLD_MS;
-            boolean maxLifetimeExceeded = now - buffer.createdAt >= CollectorConfig.MAX_LIFETIME_MS;
+            long idleElapsed = now - buffer.lastUpdatedAt;
+            long lifetimeElapsed = now - buffer.createdAt;
+            boolean idleExceeded = idleElapsed >= CollectorConfig.IDLE_THRESHOLD_MS;
+            boolean maxLifetimeExceeded = lifetimeElapsed >= CollectorConfig.MAX_LIFETIME_MS;
             if (!idleExceeded && !maxLifetimeExceeded) return;
 
             boolean rootMissing = buffer.spans.stream()
@@ -155,17 +157,27 @@ public class SpanProcessor {
                         List.copyOf(buffer.spans),
                         "ROOT_MISSING"
                 ));
+
                 traceBuffers.remove(traceId);
-                log.warn("ROOT 부재 trace DLQ 이동: {} (span {}건)",
-                        traceId, buffer.spans.size());
+
+                log.warn("trace ROOT 부재로 DLQ 이동: trace_id={}, span={}건,"
+                                + " idle={}ms/{}ms {}, lifetime={}ms/{}ms {}",
+                        traceId, buffer.spans.size(),
+                        idleElapsed, CollectorConfig.IDLE_THRESHOLD_MS,
+                        idleExceeded ? "임계초과" : "임계미달",
+                        lifetimeElapsed, CollectorConfig.MAX_LIFETIME_MS,
+                        maxLifetimeExceeded ? "임계초과" : "임계미달");
+
                 return;
             }
 
             try {
                 List<Object[]> batchParams = spanIngestionAdapter.assemble(buffer.spans);
+
                 if (!batchParams.isEmpty()) {
                     spanRepository.saveAll(batchParams);
                 }
+
                 toAck.addAll(buffer.recordIds);
                 traceBuffers.remove(traceId);
                 log.info("trace 저장 완료: {} (span {}건, ACK {}건)",
@@ -176,8 +188,16 @@ public class SpanProcessor {
                         List.copyOf(buffer.spans),
                         "SAVE_FAILED: " + e.getMessage()
                 ));
+
                 traceBuffers.remove(traceId);
-                log.error("trace 저장 실패 DLQ 이동: {} - {}", traceId, e.getMessage());
+
+                log.error("trace 저장 실패로 DLQ 이동: trace_id={}, span={}건, 실패원인={},"
+                                + " idle={}ms/{}ms {}, lifetime={}ms/{}ms {}",
+                        traceId, buffer.spans.size(), e.getMessage(),
+                        idleElapsed, CollectorConfig.IDLE_THRESHOLD_MS,
+                        idleExceeded ? "임계초과" : "임계미달",
+                        lifetimeElapsed, CollectorConfig.MAX_LIFETIME_MS,
+                        maxLifetimeExceeded ? "임계초과" : "임계미달");
             }
         });
 
