@@ -9,6 +9,7 @@ dependencies {
     implementation 'io.grpc:grpc-netty-shaded:1.60.0'
     implementation 'io.grpc:grpc-protobuf:1.60.0'
     implementation 'io.grpc:grpc-stub:1.60.0'
+    implementation 'org.jctools:jctools-core:4.0.6'
     implementation project(':common')
 
     compileOnly 'ch.qos.logback:logback-classic:1.4.14'

@@ -12,75 +12,85 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-// 생산자-소비자 패턴의 소비자 역할
-// DataQueue에서 배치로 꺼내 → Protobuf 배치 조립 → DataSender 전송
-// 변환 책임(QueueItem → Protobuf 배치)은 이 클래스가 보유
-// 전송 책임은 DataSender에 위임 (단일 책임 원칙)
+/**
+ * 생산자-소비자 패턴의 소비자 역할.
+ *
+ * <p>{@link DataQueue}에서 배치 단위로 꺼내 Protobuf 배치로 조립하고 {@link DataSender}로
+ * 전송한다. 변환 책임은 이 클래스에 두고 전송 책임은 DataSender에 위임한다.
+ *
+ * <p>단일 스레드 ExecutorService로 동작한다. 큐의 consumer가 한 스레드여야 한다는 MPSC
+ * 큐 제약과 맞물린다. 스레드는 데몬으로 두어 타깃 앱의 일반 스레드가 모두 종료되면
+ * JVM과 함께 자연 종료되도록 한다.
+ *
+ * <p>큐가 비어있으면 짧게 sleep 하고 다시 확인하는 폴링 방식이다. busy-wait를 피하기
+ * 위한 자리이고 sleep 간격은 {@link AgentConfig#IDLE_WAIT_MS}이다.
+ *
+ * <p>종료는 stop으로 트리거된다. running 플래그를 false로 내리고, 진행 중인 배치
+ * 처리를 deadline 안에 끝낼 기회를 준 뒤, 큐에 남은 데이터를 flush 한다. 종료 deadline은
+ * {@link AgentConfig#SHUTDOWN_TIMEOUT_SEC}.
+ */
 public class QueueWorker {
 
     private final DataQueue queue;
     private final DataSender sender;
     private final ExecutorService executor;
 
-    // volatile 선택 이유:
-    //   AgentMain ShutdownHook 스레드(쓰기)와 QueueWorker 스레드(읽기)가
-    //   서로 다른 CPU 코어의 캐시를 사용할 수 있음
-    //   volatile 없으면 ShutdownHook의 false 변경이 QueueWorker에 즉시 반영 안 될 수 있음
-    //   volatile은 항상 메인 메모리에서 직접 읽고 써서 즉시 반영 보장
+    /**
+     * 실행 플래그. AgentMain ShutdownHook 스레드(쓰기)와 worker 스레드(읽기)가 서로
+     * 다른 CPU 코어 캐시를 쓸 수 있으므로 volatile로 메인 메모리 가시성을 보장한다.
+     */
     private volatile boolean running = false;
 
     public QueueWorker(DataQueue queue, DataSender sender) {
         this.queue = queue;
         this.sender = sender;
-        // ThreadFactory로 스레드 이름과 데몬 여부 직접 제어
-        // 기본 팩토리는 이름/데몬 설정 불가
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "queue-worker");
-            // 데몬 스레드: 타겟 앱의 일반 스레드가 모두 종료되면 JVM과 함께 종료
-            // 일반 스레드면 QueueWorker가 살아있는 한 JVM이 종료되지 않음
             t.setDaemon(true);
             return t;
         });
     }
 
+    /** worker 스레드를 기동한다. */
     public void start() {
         running = true;
         executor.submit(this::run);
     }
 
+    /**
+     * worker를 graceful 종료한다.
+     *
+     * <p>running 플래그를 내려 다음 루프 진입을 막고, executor를 shutdown해 새 작업
+     * 제출을 차단한다. {@link AgentConfig#SHUTDOWN_TIMEOUT_SEC} 안에 진행 중인 배치가
+     * 끝나지 않으면 shutdownNow로 전환한다. 마지막에 큐에 남은 데이터를 flushRemaining
+     * 으로 한 번 더 꺼내 전송 시도한다.
+     */
     public void stop() {
         running = false;
-        // 새 작업 제출 차단, 현재 실행 중인 배치 처리는 완료 대기
         executor.shutdown();
         try {
-            // 최대 SHUTDOWN_TIMEOUT_SEC 동안 graceful 종료 대기
             if (!executor.awaitTermination(
                     AgentConfig.SHUTDOWN_TIMEOUT_SEC, TimeUnit.SECONDS)) {
-                // 시간 초과 시 강제 종료
                 executor.shutdownNow();
             }
         } catch (InterruptedException e) {
-            // awaitTermination 대기 중 외부 강제 종료 신호
-            // graceful 종료 포기, 강제 종료로 전환
             executor.shutdownNow();
         }
-        // 루프 탈출 후 큐에 남은 데이터 마지막 전송
-        // 종료 시 큐 잔여 데이터 유실 방지
         flushRemaining();
     }
 
+    /**
+     * worker 메인 루프. drain → send 반복. 큐가 비어있으면 IDLE_WAIT_MS 만큼 sleep.
+     */
     private void run() {
         while (running) {
             List<QueueItem> batch = new ArrayList<>();
             int count = queue.drainAll(batch, AgentConfig.BATCH_SIZE);
 
             if (count == 0) {
-                // 큐가 비어있음 → 잠깐 대기 후 재확인
-                // sleep 없이 while 루프 시 CPU 100% 점유
                 try {
                     Thread.sleep(AgentConfig.IDLE_WAIT_MS);
                 } catch (InterruptedException e) {
-                    // sleep 중 종료 신호 → 루프 탈출
                     break;
                 }
                 continue;
@@ -90,13 +100,17 @@ public class QueueWorker {
         }
     }
 
-    // 변환 책임: QueueItem → Protobuf 배치 조립
-    // DataSender는 전송만 담당 (단일 책임 원칙)
-    // switch 화살표 문법: Java 14+ 정식 지원, break 없이 각 case 독립 실행
-    // try-catch 이유: GrpcSenderImpl.sendWithRetry()가 StatusRuntimeException은 잡지만
-    //                그 외 예외(네트워크 레벨 등)는 전파됨
-    //                예외가 run() 루프 밖으로 전파되면 QueueWorker 전체가 죽어버림
-    //                타겟 앱은 살아있는데 에이전트 전송만 멈추는 상황 방지
+    /**
+     * 배치로 꺼낸 {@link QueueItem} 목록을 타입별 Protobuf 배치로 조립해 전송한다.
+     *
+     * <p>변환 책임은 이 자리에 보유하고 전송은 {@link DataSender}에 위임한다. switch
+     * 화살표 문법(Java 14+)으로 case 별 독립 실행 한다.
+     *
+     * <p>try-catch는 protobuf 빌더 예외 등 비정상 케이스에서 run 루프가 죽지 않도록
+     * 둔다. AsyncStub은 RPC 실패를 worker 스레드로 던지지 않으므로(콜백 스레드로 감)
+     * 정상 경로의 RPC 에러는 이 catch에 잡히지 않는다. 타깃 앱이 살아있는데 에이전트
+     * 전송만 멈추는 상황을 방지하기 위한 보호 자리다.
+     */
     private void send(List<QueueItem> batch) {
         MonitoringProto.MetricsBatch.Builder metricsBuilder = MonitoringProto.MetricsBatch.newBuilder();
         MonitoringProto.SpanBatch.Builder spanBuilder       = MonitoringProto.SpanBatch.newBuilder();
@@ -111,33 +125,35 @@ public class QueueWorker {
         }
 
         try {
-            // 비어있는 배치는 GrpcSenderImpl 내부에서 전송 스킵
             sender.sendMetrics(metricsBuilder.build());
             sender.sendSpan(spanBuilder.build());
             sender.sendLog(logBuilder.build());
         } catch (Exception e) {
-            // 전송 실패 — 이 배치는 드롭, run() 루프는 계속 실행
-            // 타겟 앱 영향 금지 원칙: 에이전트 장애가 타겟 앱을 멈추면 안 됨
-            // 완전한 유실 방지는 Redis Streams + AOF가 담당
-            System.err.println("[QueueWorker] 배치 전송 실패, 드롭: " + e.getMessage());
+            System.err.println("[QueueWorker] 배치 처리 실패, 드롭: " + e.getMessage());
         }
     }
 
+    /**
+     * 종료 직전 큐에 남은 데이터를 모두 꺼내 마지막으로 전송 시도한다.
+     * Integer.MAX_VALUE를 limit으로 넘겨 남은 데이터 전부를 꺼낸다.
+     */
     private void flushRemaining() {
         List<QueueItem> remaining = new ArrayList<>();
-        // Integer.MAX_VALUE: 남은 데이터 전부 꺼냄
         queue.drainAll(remaining, Integer.MAX_VALUE);
         if (!remaining.isEmpty()) {
             send(remaining);
         }
     }
 
+    /** 현재 실행 중인지 여부. */
     public boolean isRunning() {
         return running;
     }
 
-    // 즉시 drainAll() → send() 호출
-    // 테스트 시 주기 대기 없이 바로 전송 강제
+    /**
+     * 큐의 모든 항목을 즉시 꺼내 전송한다. 테스트에서 주기 대기 없이 전송을 강제할 때
+     * 사용한다.
+     */
     public void flush() {
         List<QueueItem> batch = new ArrayList<>();
         queue.drainAll(batch, Integer.MAX_VALUE);

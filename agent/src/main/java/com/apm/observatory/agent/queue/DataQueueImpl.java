@@ -3,40 +3,50 @@ package com.apm.observatory.agent.queue;
 import com.apm.common.proto.MonitoringProto.LogData;
 import com.apm.common.proto.MonitoringProto.MetricsData;
 import com.apm.common.proto.MonitoringProto.SpanData;
+import org.jctools.queues.MpscArrayQueue;
 
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
-// DataQueue 퍼사드 구현체
-// 내부 복잡성(ArrayBlockingQueue + QueueItem 래핑)을 숨기고
-// Advice에게 타입별 단순 메서드만 노출
+/**
+ * Advice 후킹 측이 호출하는 큐 퍼사드.
+ *
+ * <p>타깃 앱의 요청 스레드(Advice 4종 + MetricsCollector + GrpcLogbackAppender)가
+ * 데이터를 offer하고, QueueWorker 한 스레드만 drain한다. 이 producer 다수 ·
+ * consumer 1개 구조에 정확히 들어맞는 JCTools {@link MpscArrayQueue}를 내부 자료
+ * 구조로 둔다. 자리 잡기는 producerIndex CAS, 데이터 쓰기는 각자 다른 슬롯에서
+ * 일어나므로 {@link java.util.concurrent.ArrayBlockingQueue}의 단일 ReentrantLock
+ * 경합과 park/unpark 비용이 사라진다.
+ *
+ * <p>큐가 가득이면 offer가 false를 반환하고 데이터는 드롭된다. 타깃 앱이 멈추지
+ * 않도록 백프레셔를 producer 측으로 흘리지 않는 정책이다. 완전한 유실 방지는 후단
+ * Redis Streams + AOF가 담당한다.
+ *
+ * <p>{@link DataType}별로 메서드를 나눠 호출 측이 {@link QueueItem} 구성 책임을
+ * 모르게 한다.
+ */
 public class DataQueueImpl implements DataQueue {
 
-    // 고정 크기 배열 기반 큐
-    // ArrayBlockingQueue 선택 이유:
-    //   - 고정 크기로 메모리 상한 보장
-    //   - LinkedBlockingQueue보다 메모리 효율적 (노드 객체 할당 없음)
-    //   - 지금 수집량에서는 표준 구현으로 충분하다고 판단함
-    // 큐 경합이 심해진다면 잠금 없이 동시 접근을 처리하는 방식으로 바꾸는 게 나을 것 같음
-    private final ArrayBlockingQueue<QueueItem> queue;
-    // 여러 요청 스레드(Advice)가 동시에 offer() 호출 → 원자적 증가 필요
+    private final MpscArrayQueue<QueueItem> queue;
     private final AtomicLong dropCount = new AtomicLong(0);
 
     public DataQueueImpl(int capacity) {
-        this.queue = new ArrayBlockingQueue<>(capacity);
+        this.queue = new MpscArrayQueue<>(capacity);
     }
 
+    /**
+     * 메트릭 데이터를 큐에 적재한다. 가득이면 드롭하고 dropCount를 증가시킨다.
+     */
     @Override
     public void offerMetrics(MetricsData data) {
-        // offer(): 꽉 차면 false 반환 후 즉시 복귀 (드롭 전략)
-        // put()은 블로킹 → 타겟 앱 영향 금지 원칙 위반
-        // offer() false = 큐 꽉 참 → 드롭 발생
         if (!queue.offer(new QueueItem(DataType.METRICS, data))) {
             dropCount.incrementAndGet();
         }
     }
 
+    /**
+     * span 데이터를 큐에 적재한다. 가득이면 드롭하고 dropCount를 증가시킨다.
+     */
     @Override
     public void offerSpan(SpanData data) {
         if (!queue.offer(new QueueItem(DataType.SPAN, data))) {
@@ -44,6 +54,9 @@ public class DataQueueImpl implements DataQueue {
         }
     }
 
+    /**
+     * 로그 데이터를 큐에 적재한다. 가득이면 드롭하고 dropCount를 증가시킨다.
+     */
     @Override
     public void offerLog(LogData data) {
         if (!queue.offer(new QueueItem(DataType.LOG, data))) {
@@ -51,21 +64,36 @@ public class DataQueueImpl implements DataQueue {
         }
     }
 
+    /** 현재 큐에 적재된 항목 수. */
     @Override
     public int getQueueSize() {
         return queue.size();
     }
 
+    /** 누적 드롭 수. */
     @Override
     public long getDropCount() {
         return dropCount.get();
     }
 
+    /**
+     * 큐에서 최대 {@code maxItems}개를 꺼내 {@code target}에 채워 넣는다.
+     *
+     * <p>{@link MpscArrayQueue}는 {@link java.util.Queue#drainTo}를 구현하지 않고
+     * {@link org.jctools.queues.MessagePassingQueue#drain} 시그니처로
+     * {@code Consumer<E>}를 받는다. {@code target::add}를 Consumer로 넘겨
+     * 내부 relaxedPoll 루프가 List에 직접 add 하도록 위임한다.
+     *
+     * <p>MPSC 큐의 drain은 단일 consumer 스레드 전용이므로 QueueWorker 외 다른
+     * 스레드가 이 메서드를 호출하면 안 된다.
+     *
+     * @param target   꺼낸 항목을 담을 List
+     * @param maxItems 한 번에 꺼낼 최대 건수
+     * @return 실제로 꺼낸 항목 수
+     */
     @Override
     public int drainAll(List<QueueItem> target, int maxItems) {
-        // lock 1번으로 최대 maxItems건을 한 번에 꺼냄
-        // poll() N번 반복보다 lock 획득/해제 비용 절감
-        return queue.drainTo(target, maxItems);
+        return queue.drain(target::add, maxItems);
     }
 
 }
