@@ -47,7 +47,7 @@ public final class AgentConfig {
 
     // ===== GrpcSenderImpl =====
 
-    /** 동시 발사 가능한 inflight RPC 상한(Semaphore permit 수). */
+    /** 동시 inflight RPC 상한(Semaphore permit 수). */
     public static final int INFLIGHT_LIMIT = 50;
 
     // ===== MetricsCollector =====

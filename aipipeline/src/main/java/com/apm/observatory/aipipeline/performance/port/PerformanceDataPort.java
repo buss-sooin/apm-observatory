@@ -19,6 +19,7 @@ public interface PerformanceDataPort {
     // Span 스냅샷
     record SpanSnapshot(
             String spanId,
+            String traceId,
             String appName,
             String spanType,
             Long durationMs,
@@ -36,8 +37,5 @@ public interface PerformanceDataPort {
 
     // 최근 Span 조회
     List<SpanSnapshot> getRecentSpans(String appName, Instant start, Instant end);
-
-    // 평소 기준 Span 평균 응답시간
-    Double getBaselineSpanAvg(String appName, String spanType, Instant start, Instant end);
 
 }

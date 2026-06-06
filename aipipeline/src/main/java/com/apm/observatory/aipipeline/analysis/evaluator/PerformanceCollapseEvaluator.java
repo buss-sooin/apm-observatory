@@ -1,20 +1,26 @@
 package com.apm.observatory.aipipeline.analysis.evaluator;
 
+import com.apm.observatory.aipipeline.analysis.calculator.AppResponseTimeCalculator;
 import com.apm.observatory.aipipeline.analysis.status.DetectionStatus;
 import com.apm.observatory.aipipeline.analysis.status.ResourceStatus;
 import com.apm.observatory.aipipeline.analysis.status.ResponseStatus;
 import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.MetricsSnapshot;
 import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.SpanSnapshot;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.OptionalDouble;
 
 import static com.apm.observatory.aipipeline.analysis.status.ResourceStatus.*;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class PerformanceCollapseEvaluator {
+
+    private final AppResponseTimeCalculator appResponseTimeCalculator;
 
     public ResourceStatus isResourceSpiked(List<MetricsSnapshot> recentMetrics,
                                     double baselineCpuAvg,
@@ -44,6 +50,18 @@ public class PerformanceCollapseEvaluator {
         return NORMAL;
     }
 
+    /**
+     * 외부 호출을 뺀 trace 응답시간 평균이 평소 대비 급등했는지 판정한다.
+     *
+     * <p>{@link AppResponseTimeCalculator}로 구한 측정 평균이 baseline의
+     * {@code spikeMultiplier}배를 넘으면 SLOWED로 본다. 수집된 span이 없거나
+     * 응답시간을 계산할 수 있는 trace가 없으면 NODATA를 돌려준다.
+     *
+     * @param recentSpans     최근 구간에서 수집한 span 목록(타입 혼재)
+     * @param baselineSpanAvg 평소 기준 응답시간 평균(ms)
+     * @param spikeMultiplier 급등 판정 배수
+     * @return SLOWED / NORMAL / NODATA
+     */
     public ResponseStatus isSpanSlowed(List<SpanSnapshot> recentSpans,
                                 double baselineSpanAvg,
                                 double spikeMultiplier) {
@@ -52,11 +70,12 @@ public class PerformanceCollapseEvaluator {
             return ResponseStatus.NODATA;
         }
 
-        double sumDuration = 0.0;
-        for (SpanSnapshot s : recentSpans) {
-            sumDuration += s.durationMs();
+        OptionalDouble avgResponseTime = appResponseTimeCalculator.calculateAverage(recentSpans);
+        if (avgResponseTime.isEmpty()) {
+            log.warn("응답시간 판단 스킵 - ROOT가 있는 trace 없음");
+            return ResponseStatus.NODATA;
         }
-        double avgDuration = sumDuration / recentSpans.size();
+        double avgDuration = avgResponseTime.getAsDouble();
 
         log.debug("응답시간 판단 avgDuration={}ms, baseline={}ms", avgDuration, baselineSpanAvg);
 

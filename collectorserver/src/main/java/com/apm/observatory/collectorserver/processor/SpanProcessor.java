@@ -35,11 +35,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>buffer는 인메모리 ConcurrentHashMap으로 유지되므로 누적되면 JVM 메모리 누수가 된다.
  * 종료 판정 통과 후 어떤 결과가 나오든 buffer에서 즉시 제거하는 원칙을 둔다.
  *
+ * <p>ROOT 유무는 종료 판정과 저장 여부에 관여하지 않는다. ROOT가 없는 불완전 trace도
+ * 도착한 span 그대로 저장하고, 완전성 판단은 조회 시점(apiserver)으로 미룬다.
+ *
  * <ul>
  *   <li>saveAll 성공 → recordIds를 FlushResult.toAcknowledge에 담고 buffer에서 제거</li>
  *   <li>saveAll 실패 → spans와 recordIds를 DeadLetterEntry(reason=SAVE_FAILED)로 묶어
- *       FlushResult.toDeadLetter에 담고 buffer에서 제거</li>
- *   <li>ROOT 부재 → spans와 recordIds를 DeadLetterEntry(reason=ROOT_MISSING)로 묶어
  *       FlushResult.toDeadLetter에 담고 buffer에서 제거</li>
  * </ul>
  *
@@ -48,7 +49,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>traceBuffers는 두 스레드가 동시에 접근한다. span을 쌓는 Consumer 스레드와
  * 타임아웃을 검사·제거하는 스케줄러 스레드다. 이 동시 접근 때문에
- * {@link java.util.concurrent.ConcurrentHashMap}을 쓴다.
+ * {@link ConcurrentHashMap}을 쓴다.
  *
  * <p>시간 의존성은 {@link Clock}으로 추상화한다. 운영 진입점인 public 생성자는 시스템
  * 시각을 쓰고, 테스트는 {@link #newInstance(SpanRepository, SpanIngestionAdapter, Clock)}
@@ -147,29 +148,6 @@ public class SpanProcessor {
             boolean idleExceeded = idleElapsed >= CollectorConfig.IDLE_THRESHOLD_MS;
             boolean maxLifetimeExceeded = lifetimeElapsed >= CollectorConfig.MAX_LIFETIME_MS;
             if (!idleExceeded && !maxLifetimeExceeded) return;
-
-            boolean rootMissing = buffer.spans.stream()
-                    .noneMatch(s -> s.get("parent_span_id") == null
-                            || s.get("parent_span_id").isEmpty());
-            if (rootMissing) {
-                toDlq.add(new DeadLetterEntry(
-                        List.copyOf(buffer.recordIds),
-                        List.copyOf(buffer.spans),
-                        "ROOT_MISSING"
-                ));
-
-                traceBuffers.remove(traceId);
-
-                log.warn("trace ROOT 부재로 DLQ 이동: trace_id={}, span={}건,"
-                                + " idle={}ms/{}ms {}, lifetime={}ms/{}ms {}",
-                        traceId, buffer.spans.size(),
-                        idleElapsed, CollectorConfig.IDLE_THRESHOLD_MS,
-                        idleExceeded ? "임계초과" : "임계미달",
-                        lifetimeElapsed, CollectorConfig.MAX_LIFETIME_MS,
-                        maxLifetimeExceeded ? "임계초과" : "임계미달");
-
-                return;
-            }
 
             try {
                 List<Object[]> batchParams = spanIngestionAdapter.assemble(buffer.spans);

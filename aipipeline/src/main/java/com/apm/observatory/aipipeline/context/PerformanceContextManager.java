@@ -3,6 +3,7 @@ package com.apm.observatory.aipipeline.context;
 import com.apm.observatory.aipipeline.ai.port.AiAnalysisResultPort;
 import com.apm.observatory.aipipeline.ai.port.ErosionSlopePort;
 import com.apm.observatory.aipipeline.ai.service.OllamaAnalysisService;
+import com.apm.observatory.aipipeline.analysis.calculator.AppResponseTimeCalculator;
 import com.apm.observatory.aipipeline.analysis.evaluator.ExternalImpactEvaluator;
 import com.apm.observatory.aipipeline.analysis.evaluator.PerformanceCollapseEvaluator;
 import com.apm.observatory.aipipeline.analysis.evaluator.PerformanceErosionEvaluator;
@@ -45,6 +46,7 @@ public class PerformanceContextManager {
     private final ThresholdConfigPort thresholdConfigPort;
     private final BusinessCyclePort businessCyclePort;
     private final PerformanceCollapseEvaluator collapseEvaluator;
+    private final AppResponseTimeCalculator appResponseTimeCalculator;
     private final ExternalImpactEvaluator externalImpactEvaluator;
     private final PerformanceErosionEvaluator erosionEvaluator;
     private final OllamaAnalysisService ollamaAnalysisService;
@@ -67,6 +69,7 @@ public class PerformanceContextManager {
 
         this.dependencies = AnalysisDependencies.builder()
                 .collapseEvaluator(collapseEvaluator)
+                .appResponseTimeCalculator(appResponseTimeCalculator)
                 .externalImpactEvaluator(externalImpactEvaluator)
                 .erosionEvaluator(erosionEvaluator)
                 .ollamaAnalysisService(ollamaAnalysisService)
@@ -113,7 +116,8 @@ public class PerformanceContextManager {
                         (port, ext, start, end) -> new BaselineMetrics(
                                 port.getBaselineCpuAvg(appName, start, end),
                                 port.getBaselineHeapAvg(appName, start, end),
-                                port.getBaselineSpanAvg(appName, "INTERNAL", start, end),
+                                appResponseTimeCalculator.calculateAverage(
+                                        port.getRecentSpans(appName, start, end)).orElse(0.0),
                                 ext.getBaselineExternalSpanAvg(appName, start, end)),
                         baselineStart, baselineEnd,
                         performanceDataPort, externalImpactDataPort)

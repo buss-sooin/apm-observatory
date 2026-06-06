@@ -5,25 +5,30 @@ import com.apm.observatory.agent.AgentContext;
 
 import java.util.Map;
 
-// AppenderBase 상속 제거 이유:
-//   GrpcLogbackAppender를 ClassInjector로 targetapp ClassLoader에 주입할 때
-//   defineClass 시점에 AppenderBase를 찾으려 하는데
-//   AppenderBase는 Spring Boot fat JAR의 BOOT-INF/lib 중첩 JAR 안에 있어서
-//   일반 ClassLoader.defineClass()가 중첩 JAR을 탐색하지 못함 → NoClassDefFoundError
-//
-//   해결: AppenderBase 상속 제거 → 순수 Java 클래스로 변경
-//         defineClass 시점에 외부 클래스 참조 없음 → 주입 성공
-//         logback과의 연결은 AppenderRegistrationAdvice에서 동적 프록시로 처리
-//
-//   trade-off: logback 타입(ILoggingEvent 등)을 직접 참조 불가
-//              → 리플렉션으로 event 필드 추출
+/**
+ * logback ROOT logger에 붙어 로그 이벤트를 큐로 보내는 appender.
+ *
+ * <p>일반적인 방식인 logback {@code AppenderBase} 상속을 쓰지 않는다. 이 클래스를
+ * {@code ClassInjector}로 logback의 ClassLoader에 주입할 때 {@code defineClass}가
+ * {@code AppenderBase}를 찾으려다 Spring Boot fat JAR의 중첩 JAR을 탐색하지 못해
+ * {@code NoClassDefFoundError}가 났다. 그래서 상속을 떼고 외부 참조 없는 순수 클래스로
+ * 두어 주입이 되게 했고, logback과의 연결은
+ * {@link com.apm.observatory.agent.advice.mvc.AppenderRegistrationAdvice}의 동적 프록시가 맡는다.
+ *
+ * <p>대신 logback 타입({@code ILoggingEvent} 등)을 직접 참조할 수 없어 이벤트 필드는
+ * 리플렉션으로 꺼낸다.
+ */
 public class GrpcLogbackAppender {
 
     private volatile boolean started = false;
     private String name = "GrpcLogbackAppender";
 
-    // logback이 Appender.doAppend()를 호출할 때 동적 프록시가 이 메서드로 위임
-    // 파라미터: Object event (실제로는 ILoggingEvent이지만 직접 참조 불가)
+    /**
+     * logback이 로그 이벤트를 넘길 때 동적 프록시가 위임하는 진입점. 이벤트 필드를
+     * 리플렉션으로 꺼내 {@code LogData}로 만들어 큐에 넣는다.
+     *
+     * @param event 실제 타입은 logback {@code ILoggingEvent}지만 직접 참조할 수 없어 Object로 받는다
+     */
     public void doAppend(Object event) {
         if (!started) return;
         if (AgentContext.getQueue() == null) return;
@@ -103,12 +108,12 @@ public class GrpcLogbackAppender {
         }
     }
 
-    // logback Appender 인터페이스 메서드들
-    // AppenderRegistrationAdvice의 동적 프록시가 이 메서드들로 위임
+    /** appender를 활성화한다. 이후 들어오는 이벤트만 수집한다. */
     public void start() {
         this.started = true;
     }
 
+    /** appender를 비활성화한다. 이후 이벤트는 무시된다. */
     public void stop() {
         this.started = false;
     }
@@ -125,7 +130,7 @@ public class GrpcLogbackAppender {
         this.name = name;
     }
 
-    // logback Context는 사용하지 않지만 Appender 인터페이스 구현을 위해 필요
+    // logback Appender 인터페이스 구색용 no-op
     public void setContext(Object context) { }
 
     public Object getCopyOfAttachedFiltersList() {

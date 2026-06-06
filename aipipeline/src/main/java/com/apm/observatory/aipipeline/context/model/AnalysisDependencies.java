@@ -4,6 +4,7 @@ import com.apm.observatory.aipipeline.ai.port.AiAnalysisResultPort;
 import com.apm.observatory.aipipeline.ai.port.ErosionSlopePort;
 import com.apm.observatory.aipipeline.ai.service.OllamaAnalysisService;
 import com.apm.observatory.aipipeline.analysis.evaluator.ExternalImpactEvaluator;
+import com.apm.observatory.aipipeline.analysis.calculator.AppResponseTimeCalculator;
 import com.apm.observatory.aipipeline.analysis.evaluator.PerformanceCollapseEvaluator;
 import com.apm.observatory.aipipeline.analysis.evaluator.PerformanceErosionEvaluator;
 import com.apm.observatory.aipipeline.context.strategy.AnomalyDetectionStrategy;
@@ -13,6 +14,7 @@ import java.util.List;
 
 public record AnalysisDependencies(
         PerformanceCollapseEvaluator collapseEvaluator,
+        AppResponseTimeCalculator appResponseTimeCalculator,
         ExternalImpactEvaluator externalImpactEvaluator,
         PerformanceErosionEvaluator erosionEvaluator,
         OllamaAnalysisService ollamaAnalysisService,
@@ -29,6 +31,7 @@ public record AnalysisDependencies(
 
     public static class Builder {
         private PerformanceCollapseEvaluator collapseEvaluator;
+        private AppResponseTimeCalculator appResponseTimeCalculator;
         private ExternalImpactEvaluator externalImpactEvaluator;
         private PerformanceErosionEvaluator erosionEvaluator;
         private OllamaAnalysisService ollamaAnalysisService;
@@ -39,6 +42,11 @@ public record AnalysisDependencies(
 
         public Builder collapseEvaluator(PerformanceCollapseEvaluator collapseEvaluator) {
             this.collapseEvaluator = collapseEvaluator;
+            return this;
+        }
+
+        public Builder appResponseTimeCalculator(AppResponseTimeCalculator appResponseTimeCalculator) {
+            this.appResponseTimeCalculator = appResponseTimeCalculator;
             return this;
         }
 
@@ -79,7 +87,7 @@ public record AnalysisDependencies(
 
         public AnalysisDependencies build() {
             return new AnalysisDependencies(
-                    collapseEvaluator, externalImpactEvaluator, erosionEvaluator,
+                    collapseEvaluator, appResponseTimeCalculator, externalImpactEvaluator, erosionEvaluator,
                     ollamaAnalysisService, aiAnalysisResultPort,
                     erosionSlopePort,
                     detectionStrategies, trendStrategies);

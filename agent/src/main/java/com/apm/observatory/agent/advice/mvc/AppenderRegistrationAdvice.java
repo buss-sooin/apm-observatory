@@ -16,27 +16,44 @@ import com.apm.observatory.agent.diagnostic.ClassLoaderDiagnostic;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * logback ROOT logger에 {@link GrpcLogbackAppender}를 한 번 등록하는 Advice.
+ *
+ * <p>{@code FrameworkServlet.initServletBean}이 끝나는 시점에 실행된다. Spring과 logback
+ * 초기화가 끝난 뒤라야 실제 logback {@code LoggerContext}를 찾을 수 있기 때문이다.
+ *
+ * <p>{@link GrpcLogbackAppender}는 logback의 {@code AppenderBase}를 상속하지 않는 순수
+ * 클래스라 {@code Appender} 타입으로 바로 등록할 수 없다. 그래서 logback을 로드한
+ * ClassLoader를 직접 찾아 {@code ClassInjector}로 appender를 그 ClassLoader에 주입하고,
+ * 동적 프록시로 {@code Appender} 인터페이스를 구현해 호출을 appender 인스턴스로 위임한다.
+ * 주입 위치가 어긋나면 appender와 logback의 ClassLoader가 달라져 등록이 실패하므로,
+ * {@code loggerContext}가 속한 ClassLoader를 기준으로 삼는다.
+ *
+ * <p>{@code appenderRegistered}로 최초 한 번만 등록하고 이후 호출은 건너뛴다.
+ */
 public class AppenderRegistrationAdvice {
 
+    /** 중복 등록을 막는 플래그. 최초 한 번만 false에서 true로 전환된다. */
     public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
+    /**
+     * {@code initServletBean} 종료 시점 콜백. 최초 호출에만 appender 등록과
+     * ClassLoader 진단 출력을 수행한다.
+     */
     @Advice.OnMethodExit
     public static void onExit() {
         if (appenderRegistered.compareAndSet(false, true)) {
             registerGrpcAppender();
 
-            // ── ClassLoader 구조 진단 (테스트용) ─────────────────────────
-            // initServletBean 완료 시점 — Spring 초기화 후 실제 ClassLoader 구조 확인
-            // README 섹션 7 ClassLoader 문제 추적 과정과 연결되는 진단 출력
-            // 테스트 완료 후 아래 3개만 남길 것:
-            //   printHierarchy() / printAllThreadClassLoaders() / printClassLoaderInfo()
-            ClassLoaderDiagnostic.printAllClassLoaders();
             ClassLoaderDiagnostic.printHierarchy();
             ClassLoaderDiagnostic.printAllThreadClassLoaders();
             ClassLoaderDiagnostic.printClassLoaderInfo();
         }
     }
 
+    /**
+     * logback을 로드한 ClassLoader를 찾아 appender를 주입하고 ROOT logger에 등록한다.
+     */
     public static void registerGrpcAppender() {
         try {
             // ── 1. loggerContext를 가진 실제 ClassLoader 탐색 ────────────

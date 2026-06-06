@@ -1,5 +1,6 @@
 package com.apm.observatory.aipipeline.evaluator;
 
+import com.apm.observatory.aipipeline.analysis.calculator.AppResponseTimeCalculator;
 import com.apm.observatory.aipipeline.analysis.evaluator.PerformanceCollapseEvaluator;
 import com.apm.observatory.aipipeline.analysis.status.DetectionStatus;
 import com.apm.observatory.aipipeline.analysis.status.ResourceStatus;
@@ -23,7 +24,7 @@ class PerformanceCollapseEvaluatorTest {
 
     @BeforeEach
     void setUp() {
-        evaluator = new PerformanceCollapseEvaluator();
+        evaluator = new PerformanceCollapseEvaluator(new AppResponseTimeCalculator());
     }
 
     // ── isResourceSpiked ──────────────────────────────────────────
@@ -65,27 +66,47 @@ class PerformanceCollapseEvaluatorTest {
     // ── isSpanSlowed ──────────────────────────────────────────────
 
     @Test
-    @DisplayName("Span 평균 응답시간이 평소 대비 3배 초과하면 SLOWED")
-    void span_응답지연시_SLOWED() {
+    @DisplayName("외부 호출을 뺀 trace 응답시간 평균이 평소 대비 3배 초과하면 SLOWED")
+    void 외부제외_응답지연시_SLOWED() {
+        // trace-1: ROOT 1000 - EXTERNAL 300 = 700
         List<SpanSnapshot> spans = List.of(
-                spanSnapshot(900L),
-                spanSnapshot(1200L)
+                span("trace-1", "ROOT", 1000L),
+                span("trace-1", "EXTERNAL", 300L)
         );
-        // 평균 1050ms, 평소 300ms × 3.0 = 900ms → 1050 > 900 → SLOWED
-        assertThat(evaluator.isSpanSlowed(spans, 300.0, SPIKE_MULTIPLIER))
+        // 평균 700ms, 평소 200ms × 3.0 = 600ms → 700 > 600 → SLOWED
+        assertThat(evaluator.isSpanSlowed(spans, 200.0, SPIKE_MULTIPLIER))
                 .isEqualTo(ResponseStatus.SLOWED);
     }
 
     @Test
-    @DisplayName("Span 평균 응답시간이 정상이면 NORMAL")
-    void span_정상시_NORMAL() {
+    @DisplayName("외부 호출을 뺀 trace 응답시간 평균이 정상이면 NORMAL")
+    void 외부제외_정상시_NORMAL() {
+        // trace-1: ROOT 500 - EXTERNAL 200 = 300
         List<SpanSnapshot> spans = List.of(
-                spanSnapshot(400L),
-                spanSnapshot(500L)
+                span("trace-1", "ROOT", 500L),
+                span("trace-1", "EXTERNAL", 200L)
         );
-        // 평균 450ms, 평소 300ms × 3.0 = 900ms → 450 < 900 → NORMAL
-        assertThat(evaluator.isSpanSlowed(spans, 300.0, SPIKE_MULTIPLIER))
+        // 평균 300ms, 평소 200ms × 3.0 = 600ms → 300 < 600 → NORMAL
+        assertThat(evaluator.isSpanSlowed(spans, 200.0, SPIKE_MULTIPLIER))
                 .isEqualTo(ResponseStatus.NORMAL);
+    }
+
+    @Test
+    @DisplayName("ROOT가 있는 trace가 하나도 없으면 NODATA")
+    void ROOT_없으면_NODATA() {
+        List<SpanSnapshot> spans = List.of(
+                span("trace-1", "EXTERNAL", 400L),
+                span("trace-1", "DB", 200L)
+        );
+        assertThat(evaluator.isSpanSlowed(spans, 100.0, SPIKE_MULTIPLIER))
+                .isEqualTo(ResponseStatus.NODATA);
+    }
+
+    @Test
+    @DisplayName("수집된 Span이 없으면 NODATA")
+    void Span_없으면_NODATA() {
+        assertThat(evaluator.isSpanSlowed(List.of(), 100.0, SPIKE_MULTIPLIER))
+                .isEqualTo(ResponseStatus.NODATA);
     }
 
     // ── evaluate ─────────────────────────────────────────────────
@@ -132,9 +153,9 @@ class PerformanceCollapseEvaluatorTest {
                 Instant.now(), "test-app", cpuUsage, heapUsed, heapMax, 0L, 0L);
     }
 
-    private SpanSnapshot spanSnapshot(long durationMs) {
+    private SpanSnapshot span(String traceId, String spanType, long durationMs) {
         return new SpanSnapshot(
-                "span-id", "test-app", "INTERNAL", durationMs, Instant.now());
+                "span-" + traceId + "-" + spanType, traceId, "test-app", spanType, durationMs, Instant.now());
     }
 
 }

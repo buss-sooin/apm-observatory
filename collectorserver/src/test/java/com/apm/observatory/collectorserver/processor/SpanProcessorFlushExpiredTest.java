@@ -31,11 +31,10 @@ import static org.mockito.Mockito.when;
  * <p>idle 방식: 마지막 span 도착 후 10초간 추가 도착이 없으면 trace 종료.
  * 최대수명 상한: trace 생성 후 60초를 넘으면 idle 조건과 무관하게 강제 저장.
  *
- * <p>종료 판정 통과 후 세 갈래로 분기한다.
+ * <p>종료 판정 통과 후 두 갈래로 분기한다. ROOT 유무는 분기에 관여하지 않는다.
  * <ul>
  *   <li>정상 저장: saveAll 성공 → toAcknowledge에 recordId 추가</li>
  *   <li>saveAll 실패: spans와 recordIds를 DeadLetterEntry(reason=SAVE_FAILED)로 toDeadLetter에 추가</li>
- *   <li>ROOT 부재: spans와 recordIds를 DeadLetterEntry(reason=ROOT_MISSING)로 toDeadLetter에 추가</li>
  * </ul>
  *
  * <p>모든 경로에서 종료 판정 통과한 trace는 buffer에서 즉시 제거되어 누수가 없다.
@@ -174,23 +173,19 @@ class SpanProcessorFlushExpiredTest {
     }
 
     @Test
-    @DisplayName("ROOT 부재 trace는 toDeadLetter에 ROOT_MISSING reason으로 담기고 buffer에서 제거된다")
-    void movesRootMissingTraceToDeadLetterAndRemovesFromBuffer() {
+    @DisplayName("ROOT 부재 trace도 idle 조건 만족 시 저장된다")
+    void savesTraceWithoutRootWhenIdle() {
         IncomingSpan child = childSpan("trace-A");
         processor.process(List.of(child));
 
         clock.advance(IDLE_THRESHOLD_MS);
         FlushResult result = processor.flushExpired();
 
-        verify(spanRepository, never()).saveAll(anyList());
+        verify(spanRepository, times(1)).saveAll(anyList());
         assertThat(processor.contains("trace-A")).isFalse();
 
-        assertThat(result.toAcknowledge()).isEmpty();
-        assertThat(result.toDeadLetter()).hasSize(1);
-        DeadLetterEntry entry = result.toDeadLetter().get(0);
-        assertThat(entry.reason()).isEqualTo("ROOT_MISSING");
-        assertThat(entry.recordIds()).containsExactly(child.recordId());
-        assertThat(entry.spans()).hasSize(1);
+        assertThat(result.toAcknowledge()).containsExactly(child.recordId());
+        assertThat(result.toDeadLetter()).isEmpty();
     }
 
     @Test

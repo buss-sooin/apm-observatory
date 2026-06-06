@@ -17,18 +17,29 @@ import java.lang.instrument.Instrumentation;
 
 import static net.bytebuddy.matcher.ElementMatchers.*;
 
+/**
+ * Java agent의 진입점이자 Composition Root.
+ *
+ * <p>{@code premain}은 JVM 시작 시 한 번 실행된다. Spring 컨테이너가 없는 순수 Java
+ * 환경이라, gRPC 채널 생성부터 컴포넌트 조립, {@link AgentContext} 초기화, Byte Buddy
+ * 후킹 설치까지 조립 책임을 이 클래스가 모두 가진다.
+ *
+ * <p>설치하는 후킹은 네 가지다. {@link ServletAdvice}로 요청 진입점에서 ROOT span을,
+ * {@link PreparedStatementAdvice}로 DB span을, {@link RestClientRequestAdvice}로
+ * EXTERNAL span을 만들고, {@link AppenderRegistrationAdvice}로 로그 appender를 등록한다.
+ *
+ * <p>에이전트는 타깃 앱 실행에 영향을 주지 않는 것을 원칙으로 둔다. {@code premain}에서
+ * 예외가 새어 나가면 JVM이 타깃 앱 실행을 멈추므로, 각 후킹을 독립된 try-catch로 감싸
+ * 한 후킹이 실패해도 로그만 남기고 나머지 설치와 타깃 앱 실행이 이어지게 한다.
+ */
 public class AgentMain {
 
-    // [Composition Root]
-    // premain()은 JVM 시작 시 단 한 번 실행되는 진입점
-    // Spring 없는 순수 Java 환경에서
-    // 모든 컴포넌트 생성 및 조립 책임을 여기서 담당
-
-    // [APM 에이전트 예외 처리 원칙]
-    // 에이전트는 절대 타겟 앱에 영향을 주면 안 된다.
-    // premain()에서 예외가 새어나가면 JVM이 타겟 앱 실행을 중단시킨다.
-    // 따라서 모든 후킹은 독립적인 try-catch로 격리하고
-    // 실패 시 에이전트 로그만 남기고 타겟 앱은 정상 실행을 보장한다.
+    /**
+     * 컴포넌트를 조립하고 Byte Buddy 후킹을 설치한다.
+     *
+     * @param agentArgs -javaagent 인자로 전달되는 문자열
+     * @param inst      JVM이 계측을 위해 넘겨주는 인터페이스
+     */
     public static void premain(String agentArgs, Instrumentation inst) {
         System.out.println("[Agent] 시작");
 
@@ -40,7 +51,6 @@ public class AgentMain {
         // ManagedChannel: gRPC 게이트웨이 연결
         // 채널 생성 책임은 Composition Root인 AgentMain이 보유
         // GrpcSenderImpl은 전송 책임만 보유 (단일 책임 원칙)
-        // 보안이 필요하다면 암호화 통신을 붙여야 하고, 트래픽이 늘면 연결 관리 방식도 달라져야 할 것 같음
         ManagedChannel channel = ManagedChannelBuilder
                 .forAddress(AgentConfig.GATEWAY_HOST, AgentConfig.GATEWAY_PORT)
                 .usePlaintext()

@@ -8,7 +8,6 @@ import com.apm.observatory.aipipeline.analysis.status.ResponseStatus;
 import com.apm.observatory.aipipeline.context.model.AnalysisContext;
 import com.apm.observatory.aipipeline.context.model.AnalysisDependencies;
 import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.MetricsSnapshot;
-import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.SpanSnapshot;
 import com.apm.observatory.aipipeline.ai.model.AiCallResult;
 import lombok.extern.slf4j.Slf4j;
 
@@ -35,8 +34,8 @@ public class CollapseDetectionStrategy implements AnomalyDetectionStrategy {
                 .mapToDouble(MetricsSnapshot::cpuUsage).average().orElse(0.0);
         double avgHeap = context.recentMetrics().stream()
                 .mapToDouble(MetricsSnapshot::heapUsed).average().orElse(0.0);
-        double avgSpan = context.recentSpans().stream()
-                .mapToDouble(SpanSnapshot::durationMs).average().orElse(0.0);
+        double avgSpan = dependencies.appResponseTimeCalculator()
+                .calculateAverage(context.recentSpans()).orElse(0.0);
 
         CollapseIncident incident = new CollapseIncident(
                 context.appName(), Instant.now().minusSeconds(60), Instant.now(), Instant.now(),

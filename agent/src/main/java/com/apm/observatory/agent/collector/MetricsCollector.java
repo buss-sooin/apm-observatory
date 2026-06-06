@@ -19,6 +19,18 @@ import java.util.concurrent.TimeUnit;
 
 import com.sun.management.OperatingSystemMXBean;
 
+/**
+ * 타깃 JVM과 호스트의 시스템 메트릭을 주기적으로 수집해 {@link DataQueue}에 넣는 수집기.
+ *
+ * <p>수집 항목은 CPU 사용률, heap 사용량, thread 수, disk 사용량이다. 단일 스레드
+ * {@code ScheduledExecutorService}가 {@link AgentConfig#METRICS_INTERVAL_SEC} 주기로
+ * {@code collect}를 실행한다. 스레드는 데몬으로 두어 타깃 앱이 종료되면 함께 종료된다.
+ *
+ * <p>app_name, host, ip, MXBean 참조, FileStore처럼 매번 읽으면 비용이 드는 값은 생성
+ * 시점에 한 번만 읽어 필드로 보관하고, 매 수집에서는 보관한 참조만 쓴다.
+ *
+ * <p>수집 중 예외가 나도 삼켜서 타깃 앱 실행에 영향을 주지 않는다.
+ */
 public class MetricsCollector {
 
     private final DataQueue queue;
@@ -75,7 +87,6 @@ public class MetricsCollector {
         this.threadMXBean = ManagementFactory.getThreadMXBean();
 
         // FileStore — 루트 경로 기준
-        // 마운트 포인트가 여러 개라면 전부 순회해서 합산해야 더 정확할 것 같음
         FileStore resolvedFileStore = null;
         try {
             resolvedFileStore = Files.getFileStore(Path.of("/"));
@@ -85,10 +96,10 @@ public class MetricsCollector {
         this.fileStore = resolvedFileStore;
     }
 
+    /** 주기적 수집을 시작한다. 첫 수집은 지연 없이 실행되고 이후 설정 주기로 반복된다. */
     public void start() {
         // initialDelay=0: 즉시 첫 수집 시작
         // period=5: 이후 5초마다 반복
-        // 이상이 감지됐을 때 수집 주기를 줄이면 더 세밀하게 볼 수 있을 것 같음
         executor.scheduleAtFixedRate(
                 this::collect,
                 0,
@@ -99,6 +110,7 @@ public class MetricsCollector {
                 + AgentConfig.METRICS_INTERVAL_SEC + "초)");
     }
 
+    /** 수집 스케줄러를 종료한다. deadline 안에 끝나지 않으면 강제 종료한다. */
     public void stop() {
         executor.shutdown();
         try {
@@ -123,9 +135,8 @@ public class MetricsCollector {
             }
 
             // disk_read_bytes, disk_write_bytes
-            // Java 표준 API로 IO 누적값 제공 안 함
-            // Disk IO 누적값은 표준 API로는 못 가져와서, 정확히 하려면 OS 레벨로 내려가야 할 것 같음
-            // 지금은 0으로 전송하고 수집 서버에서 이전값 없으면 스킵하는 방식으로 처리함
+            // Java 표준 API로 IO 누적값을 제공하지 않아 0으로 전송하고,
+            // 수집 서버에서 이전값이 없으면 스킵한다
             MonitoringProto.MetricsData metrics = MonitoringProto.MetricsData.newBuilder()
                     .setAppName(appName)
                     .setHost(host)

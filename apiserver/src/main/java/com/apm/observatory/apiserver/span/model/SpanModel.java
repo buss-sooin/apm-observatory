@@ -8,8 +8,9 @@ public class SpanModel {
     // GET /spans/waterfall 응답
     public record WaterfallResponse(
             String traceId,
-            long totalDurationMs,   // root span의 duration → 전체 타임라인 너비
-            Instant startTime,      // root span의 start_time → 타임라인 기준점
+            String rootStatus,      // MEASURED: 측정된 ROOT 존재 / MISSING: ROOT 없어 조립용 가짜 root로 묶음
+            long totalDurationMs,   // root span의 duration → 전체 타임라인 너비 (MISSING이면 0)
+            Instant startTime,      // root span의 start_time → 타임라인 기준점 (MISSING이면 null)
             List<WaterfallSpan> spans
     ) {}
 

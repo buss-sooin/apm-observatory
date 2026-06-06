@@ -2,22 +2,23 @@ package com.apm.observatory.agent.sender;
 
 import com.apm.common.proto.MonitoringProto;
 
-// 전략 패턴 인터페이스
-// GoF 의도: 전송 알고리즘 군(gRPC, HTTP, Kafka 등)을 캡슐화하여 교체 가능하게
-// QueueWorker는 이 인터페이스만 알고 전송 방식을 몰라도 됨
-// 전송 방식 교체 시 구현체만 교체 (QueueWorker 무변경)
-//
-// 단일 책임 원칙:
-//   변환 책임(QueueItem → Protobuf 배치) → QueueWorker
-//   전송 책임(배치 → 게이트웨이)         → DataSender 구현체
+/**
+ * 수집 데이터를 게이트웨이로 보내는 전략 인터페이스.
+ *
+ * <p>gRPC, HTTP, Kafka처럼 전송 방식이 달라져도
+ * {@link com.apm.observatory.agent.worker.QueueWorker}는 이 인터페이스만 알면 되고,
+ * 전송 방식을 바꿀 때는 구현체만 교체한다.
+ *
+ * <p>책임은 둘로 나뉜다. {@code QueueItem}을 Protobuf 배치로 바꾸는 변환은 QueueWorker가,
+ * 배치를 게이트웨이로 보내는 전송은 이 인터페이스의 구현체가 맡는다.
+ */
 public interface DataSender {
 
     void sendMetrics(MonitoringProto.MetricsBatch batch);
     void sendSpan(MonitoringProto.SpanBatch batch);
     void sendLog(MonitoringProto.LogBatch batch);
 
-    // 채널 등 네트워크 자원 해제
-    // AgentMain ShutdownHook에서 호출
+    /** 채널 등 네트워크 자원을 해제한다. AgentMain의 ShutdownHook에서 호출된다. */
     void shutdown();
 
 }

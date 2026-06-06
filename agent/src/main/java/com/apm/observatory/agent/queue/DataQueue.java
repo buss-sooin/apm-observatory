@@ -6,26 +6,32 @@ import com.apm.common.proto.MonitoringProto.SpanData;
 
 import java.util.List;
 
-// 퍼사드 패턴 인터페이스
-// GoF 의도: 복잡한 서브시스템(ArrayBlockingQueue + QueueItem + DataType)을
-//           단순한 고수준 인터페이스로 노출
-// Advice는 이 인터페이스만 알고 내부 구현을 몰라도 됨
-// 큐 구현체 교체 시 Advice 코드 무변경 보장
+/**
+ * 큐 적재·인출을 노출하는 퍼사드 인터페이스.
+ *
+ * <p>내부의 큐 자료구조와 {@link QueueItem}, {@link DataType} 구성을 감추고, Advice와
+ * {@link com.apm.observatory.agent.worker.QueueWorker}에는 고수준 메서드만 노출한다.
+ * 호출 측은 이 인터페이스만 알면 되고, 큐 구현체를 교체해도 호출 코드는 바뀌지 않는다.
+ *
+ * <p>{@code offer} 계열은 큐가 가득 차면 적재를 드롭하고 호출 스레드를 블로킹하지 않는다.
+ * 타깃 앱 스레드가 큐 때문에 멈추지 않게 하기 위한 정책이다.
+ */
 public interface DataQueue {
 
-    // Advice가 사용하는 진입점 (퍼사드)
-    // offer() 전략: 꽉 차면 즉시 false 반환 → 타겟 앱 스레드 블로킹 없음
     void offerMetrics(MetricsData data);
     void offerSpan(SpanData data);
     void offerLog(LogData data);
     int getQueueSize();
     long getDropCount();
 
-    // QueueWorker가 배치로 꺼낼 때 사용
-    // drainTo() 선택 이유: lock 1번으로 N건을 한 번에 꺼냄
-    // poll() N번보다 lock 비용 절감
-    // maxItems: 한 번의 배치에서 꺼낼 최대 건수
-    // 반환값: 실제로 꺼낸 건수
+    /**
+     * 큐에서 최대 {@code maxItems}건을 배치로 꺼내 {@code target}에 담는다. lock 한 번으로
+     * 여러 건을 옮겨 {@code poll}을 반복하는 것보다 lock 비용이 적다.
+     *
+     * @param target   꺼낸 항목을 담을 리스트
+     * @param maxItems 한 배치에서 꺼낼 최대 건수
+     * @return 실제로 꺼낸 건수
+     */
     int drainAll(List<QueueItem> target, int maxItems);
 
 }

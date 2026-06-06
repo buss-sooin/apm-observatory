@@ -51,18 +51,13 @@ public class PerformanceDataAdapter implements PerformanceDataPort {
                 .stream()
                 .map(e -> new SpanSnapshot(
                         e.getSpanId(),
+                        e.getTraceId(),
                         e.getAppName(),
                         e.getSpanType(),
                         e.getDurationMs(),
                         e.getStartTime()
                 ))
                 .toList();
-    }
-
-    @Override
-    public Double getBaselineSpanAvg(String appName, String spanType, Instant start, Instant end) {
-        return Optional.ofNullable(spanRepository.findAvgDurationMs(appName, spanType, start, end))
-                .orElse(0.0);
     }
 
 }

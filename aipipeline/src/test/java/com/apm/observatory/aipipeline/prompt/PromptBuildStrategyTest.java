@@ -151,7 +151,7 @@ class PromptBuildStrategyTest {
                 "test-app", START, NOW, NOW,
                 List.of(new PerformanceDataPort.MetricsSnapshot(
                         NOW, "test-app", 85.0, 7000L, 8000L, 0L, 0L)),
-                List.of(new SpanSnapshot("span-1", "test-app", "INTERNAL", 1500L, NOW)),
+                List.of(new SpanSnapshot("span-1", "trace-1", "test-app", "INTERNAL", 1500L, NOW)),
                 20.0, 2000.0, 300.0,
                 85.0, 7000.0, 1500.0
         );

@@ -22,22 +22,27 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>{@link DataSender} 전략 인터페이스의 gRPC + Protobuf 구현체. 전송 방식을
  * HTTP, Kafka 등으로 교체할 때 이 클래스만 교체하면 된다.
  *
- * <p>AsyncStub을 사용해 worker 스레드가 RPC 응답을 기다리지 않는다. BlockingStub
- * 구조에서는 worker 한 스레드가 RPC 한 건의 응답 시간만큼 점유돼 단위 시간당
- * 처리 건수의 천장이 RPC 응답 시간에 묶였다. AsyncStub은 호출 즉시 반환하고
- * 응답 처리는 gRPC 내부 스레드(grpc-default-executor)에서 콜백으로 일어난다.
+ * <p>AsyncStub을 사용해 worker 스레드가 RPC 응답을 기다리지 않는다. BlockingStub을
+ * 쓰면 worker 한 스레드가 RPC 한 건의 응답을 받을 때까지 기다려야 하므로, 단위
+ * 시간당 처리량이 RPC 응답 시간에 따라 정해진다. AsyncStub은 호출 즉시 반환하고
+ * 응답 처리는 gRPC 내부 스레드(grpc-default-executor)에서 콜백으로 처리된다.
  *
- * <p>비동기 발사에 자연 제동이 없으므로 {@link Semaphore}로 동시 발사 가능한
- * RPC 수에 상한을 둔다. 호출 측은 acquire에서 대기하고(가득이면 worker 점유 =
- * 백프레셔), 콜백 측은 release한다. permit 수는 {@link AgentConfig#INFLIGHT_LIMIT}.
+ * <p>비동기 전송은 호출 즉시 반환하므로 전송 속도를 스스로 제한하지 못한다.
+ * {@link Semaphore}로 동시 inflight RPC 수에 상한을 두며, permit 수는
+ * {@link AgentConfig#INFLIGHT_LIMIT}개다. worker 스레드는 RPC를 보내기 전 permit을
+ * 하나 acquire하고, RPC 응답 콜백이 도착하면 permit을 하나 release한다. inflight RPC가
+ * 상한까지 차서 남은 permit이 없으면 worker는 acquire에서 막혀 다음 전송을 시작하지
+ * 못한다. worker가 멈추면 큐에서 데이터가 빠져나가지 못해 전송이 느려진다. 전송이
+ * 느려지면 큐가 차오르고 인입 속도까지 제한되는데, 이 연쇄가 백프레셔다.
  *
- * <p>RPC 실패 시 재시도하지 않는다. retry storm으로 게이트웨이 장애가 확산되는
- * 자리를 만들지 않고, 유실 방지는 후단 Redis Streams + AOF가 담당한다. 콜백 측에서
- * 실패는 카운터에 기록하고 로그를 남기는 데 그친다.
+ * <p>RPC가 실패해도 재시도하지 않는다. 재시도가 몰리면 retry storm으로 게이트웨이
+ * 장애가 더 커질 수 있기 때문이다. 유실은 후단의 Redis Streams + AOF가 막는다.
+ * 실패하면 콜백에서 카운터를 올리고 로그를 남기는 선에서 끝낸다.
  *
- * <p>shutdown은 두 단계를 거친다. 첫째, inflight 모두 release될 때까지 deadline
- * 안에 대기. 둘째, 채널 종료 후 채널의 awaitTermination을 deadline까지 기다림.
- * 두 단계 모두 {@link AgentConfig#SHUTDOWN_TIMEOUT_SEC}를 deadline으로 쓴다.
+ * <p>shutdown은 두 단계를 거친다. 첫째, inflight RPC의 permit이 모두 release될
+ * 때까지 deadline 안에서 기다린다. 둘째, 채널을 종료한 뒤 채널의 awaitTermination이
+ * 끝날 때까지 deadline 안에서 기다린다. 두 단계 모두 deadline으로
+ * {@link AgentConfig#SHUTDOWN_TIMEOUT_SEC}를 쓴다.
  */
 public class GrpcSenderImpl implements DataSender {
 
@@ -50,9 +55,8 @@ public class GrpcSenderImpl implements DataSender {
     /**
      * 채널을 주입받아 AsyncStub과 inflight Semaphore를 구성한다.
      *
-     * <p>채널 생성 책임은 AgentMain(Composition Root)이다. 이 클래스는 전송 책임만
-     * 보유한다. API Key는 모든 RPC 호출에 메타데이터로 자동 첨부되도록 인터셉터를
-     * 건다.
+     * <p>채널 생성 책임은 AgentMain(Composition Root)이 지고, 이 클래스는 전송만
+     * 맡는다. API Key는 인터셉터를 걸어 모든 RPC 호출에 메타데이터로 자동 첨부한다.
      */
     public GrpcSenderImpl(ManagedChannel channel) {
         this.channel = channel;
@@ -135,12 +139,12 @@ public class GrpcSenderImpl implements DataSender {
     /**
      * 3종 send 메서드가 공유하는 응답 콜백을 만든다.
      *
-     * <p>onCompleted는 permit을 반환하고 sentCount를 증가시킨다. onError는 permit
-     * 반환과 errorCount 증가, 실패 로그를 남긴다. 재시도 동작은 없다.
+     * <p>onCompleted는 permit을 release하고 sentCount를 올린다. onError는 permit을
+     * release하고 errorCount를 올린 뒤 실패 로그를 남긴다. 재시도는 하지 않는다.
      *
-     * <p>콜백 실행 스레드는 gRPC 내부의 grpc-default-executor이며 worker와 다른
-     * 스레드다. 콜백 안에서 동기 sleep이나 무거운 처리를 두면 다른 RPC 콜백이
-     * 줄을 서므로 release와 카운터 갱신 외에는 두지 않는다.
+     * <p>콜백을 실행하는 스레드는 gRPC 내부의 grpc-default-executor로 worker와 다른
+     * 스레드다. 콜백 안에서 sleep을 걸거나 무거운 작업을 하면 다른 RPC 콜백이 밀리므로,
+     * release와 카운터 갱신만 한다.
      *
      * @param type 실패 로그 식별용 데이터 타입
      */
@@ -168,10 +172,10 @@ public class GrpcSenderImpl implements DataSender {
     /**
      * inflight를 drain하고 채널을 종료한다.
      *
-     * <p>tryAcquire로 INFLIGHT_LIMIT만큼의 permit을 deadline 안에 모두 회수
-     * 시도한다. 회수 성공 = 모든 콜백 도달 = 모든 RPC 결과 확정. deadline을 넘으면
-     * 미완료 inflight 건수를 로그에 남기고 채널을 강제 종료해 남은 RPC를 cancel
-     * 시킨다.
+     * <p>tryAcquire로 INFLIGHT_LIMIT 개의 permit을 deadline 안에 모두 회수한다.
+     * permit을 모두 회수했다면 inflight RPC의 콜백이 전부 도착해 결과가 확정된 것이다.
+     * deadline을 넘기면 아직 끝나지 않은 inflight 건수를 로그에 남기고 채널을 강제
+     * 종료해 남은 RPC를 cancel한다.
      *
      * <p>마지막으로 sent/error/inflight 잔여 카운터를 종료 로그에 남긴다.
      */

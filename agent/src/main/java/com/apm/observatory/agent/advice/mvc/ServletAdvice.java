@@ -8,20 +8,34 @@ import org.slf4j.MDC;
 
 import java.util.UUID;
 
+/**
+ * HTTP 요청 진입점을 후킹해 요청 한 건당 ROOT span을 만든다.
+ * onEnter에서 trace_id와 span_id를 새로 만들어 MDC에 넣는다. 같은 요청 스레드에서
+ * 실행되는 DB/EXTERNAL advice가 이 span_id를 parentSpanId로 참조해 자식 span이 된다.
+ * 이 advice가 만드는 span은 spanType이 ROOT이고 트리 최상단이 된다.
+ */
 public class ServletAdvice {
 
+    /**
+     * 요청 시작 시각을 측정하고 trace_id와 span_id를 새로 만들어 MDC에 넣는다.
+     * 여기서 만든 span_id가 자식 span(DB/EXTERNAL)의 parentSpanId 기준점이 된다.
+     *
+     * @return 요청 시작 시각(ms)
+     */
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static long onEnter() {
         String traceId = UUID.randomUUID().toString();
-        // 의도: spanId를 MDC에 저장
-        // DB/EXTERNAL Span의 parentSpanId가 이 값을 참조해서 트리 구조 성립
-        // traceId와 spanId를 분리 → INTERNAL이 root, DB/EXTERNAL이 자식으로 연결
         String spanId = UUID.randomUUID().toString();
         MDC.put("trace_id", traceId);
         MDC.put("span_id", spanId);
         return System.currentTimeMillis();
     }
 
+    /**
+     * 요청 처리 시간을 계산해 ROOT span을 만들어 큐에 넣는다.
+     * /health 같은 healthcheck/probe 경로는 추적에서 제외한다. docker healthcheck가
+     * 10초마다 호출해 불필요한 span이 쌓이기 때문이다.
+     */
     @Advice.OnMethodExit(suppress = Throwable.class, onThrowable = Throwable.class)
     public static void onExit(
             @Advice.Enter long startTime,
@@ -48,15 +62,13 @@ public class ServletAdvice {
             int status = (int) httpServletResponseClass
                     .getMethod("getStatus").invoke(response);
 
-            // 의도: healthcheck/probe 경로는 tracing 제외
-            // docker healthcheck가 10초마다 호출하므로 span이 불필요하게 쌓임
             if ("/health".equals(url)) {
                 return;
             }
 
             MonitoringProto.SpanData span = MonitoringProto.SpanData.newBuilder()
                     .setTraceId(traceId != null ? traceId : "unknown")
-                    // 의도: onEnter에서 생성한 spanId 사용 → DB/EXTERNAL의 parentSpanId 기준점
+                    // onEnter에서 만든 span_id
                     .setSpanId(spanId != null ? spanId : UUID.randomUUID().toString())
                     .setAppName(AgentContext.getAppName() != null ? AgentContext.getAppName() : "")
                     .setHost(AgentContext.getHost() != null ? AgentContext.getHost() : "")
@@ -81,7 +93,7 @@ public class ServletAdvice {
             System.err.println("[ServletAdvice] Span 수집 실패: " + e.getMessage());
         } finally {
             MDC.remove("trace_id");
-            MDC.remove("span_id");      // 추가
+            MDC.remove("span_id");
             MDC.remove("external_tracing");
         }
     }
