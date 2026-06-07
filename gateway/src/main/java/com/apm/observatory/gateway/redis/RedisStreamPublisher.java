@@ -16,18 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-// Redis Streams XADD 담당
-// Lettuce 비동기 방식 사용
-//
-// 저장 형식: Protobuf getter → Map<String, String> 필드별 변환
-// Gateway → Redis 구간은 사내 네트워크이므로 JSON 필드별 저장이 적합
-// 에이전트 → Gateway 구간(외부 네트워크, 고빈도)은 Protobuf 바이너리 유지
-//
-// 수집 서버에서 Map<String, String> 키로 직접 필드 접근
-//
-// 더 나아간다면 여기서 고려해야 할 것들이 있음
-//   maxlen으로 스트림 크기 관리 + 만료 정책 설정
-//   연결 풀 구성 고려
+/**
+ * Protobuf 배치를 Lettuce 비동기 방식으로 Redis Streams에 XADD로 발행한다.
+ *
+ * <p>저장 형식은 Protobuf getter를 {@code Map<String, String>}로 필드별 변환한 것이다.
+ * 고빈도 외부 전송 구간에 해당하는 에이전트 → gateway 구간은 Protobuf 바이너리를 유지하고,
+ * 내부 전송 구간에 해당하는 gateway → Redis 구간은 JSON 필드별 저장을 유지했다.
+ * 수집 서버는 이 {@code Map<String, String>}의 키로 필드에 직접 접근한다.
+ */
 public class RedisStreamPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(RedisStreamPublisher.class);
@@ -43,9 +39,7 @@ public class RedisStreamPublisher {
                 .build();
 
         this.client = RedisClient.create(uri);
-        // Lettuce 연결은 thread-safe
-        // 단일 연결로 여러 gRPC 스레드가 공유 가능
-        // 부하가 커지면 연결을 여러 개 두는 방식이 필요할 것 같음
+        // Lettuce 연결은 thread-safe라 단일 연결을 여러 gRPC 스레드가 공유한다
         this.connection = client.connect();
         this.commands = connection.async();
     }
@@ -62,9 +56,12 @@ public class RedisStreamPublisher {
         publish(GatewayConfig.STREAM_LOGS, batch.getItemsList(), this::logToMap);
     }
 
-    // 공통 발행 로직 — 스트림 키와 변환 함수만 다름
-    // Function<T, Map<String, String>>: T 타입을 받아 Map으로 변환하는 함수를 주입받음
-    // 호출자가 this::metricsToMap 등 메서드 레퍼런스로 변환 로직 결정
+    /**
+     * 타입별 발행 공통 로직. 스트림 키와 변환 함수만 다르다.
+     *
+     * @param toMap 항목을 {@code Map<String, String>}로 바꾸는 함수. 호출자가
+     *              {@code this::metricsToMap} 같은 메서드 레퍼런스로 변환 로직을 정한다.
+     */
     private <T> void publish(String streamKey, List<T> items,
                              Function<T, Map<String, String>> toMap) {
         items.forEach(item -> {
@@ -80,8 +77,10 @@ public class RedisStreamPublisher {
         });
     }
 
-    // Protobuf getter → Map<String, String>
-    // 수집 서버 Processor의 m.get("key") 키 이름과 정확히 일치
+    /**
+     * Protobuf getter를 {@code Map<String, String>}로 변환한다. 여기서 쓰는 키 이름은
+     * 수집 서버 Processor가 {@code m.get("key")}로 꺼내는 키와 정확히 일치해야 한다.
+     */
     private Map<String, String> metricsToMap(MonitoringProto.MetricsData item) {
         Map<String, String> map = new HashMap<>();
         map.put("timestamp", String.valueOf(item.getTimestamp()));
