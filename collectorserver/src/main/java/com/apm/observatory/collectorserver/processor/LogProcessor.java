@@ -8,6 +8,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Redis Stream에서 받은 로그 메시지를 저장 형태로 바꿔 batch 저장하는 컴포넌트.
+ *
+ * <p>세 processor 중 가장 단순하다. 로그는 timestamp를 ISO-8601로 바꾸는 것 외에
+ * 도메인 가공이 없어, 받은 컬럼을 그대로 매핑해 {@link LogRepository}로 넘긴다.
+ * span처럼 buffer에 모았다가 트리를 조립하거나 파생 값을 계산하는 단계가 없다.
+ */
 @Component
 public class LogProcessor {
 
@@ -17,10 +24,11 @@ public class LogProcessor {
         this.logRepository = logRepository;
     }
 
-    // 로그는 Metrics/Spans와 달리 가공 없이 수신 데이터 그대로 저장
-    // Metrics: Disk IO 누적값 계산 필요
-    // Spans: TraceID 기준 수집 대기 + INTERNAL 파생 계산 필요
-    // Logs: 타임스탬프 변환 외 별도 가공 없음
+    /**
+     * 로그 메시지 묶음을 변환해 batch 저장한다.
+     *
+     * @param messages 한 폴링에서 받은 로그 메시지 묶음(컬럼-값 매핑)
+     */
     public void process(List<Map<String, String>> messages) {
         if (messages.isEmpty()) return;
 
@@ -43,8 +51,7 @@ public class LogProcessor {
         logRepository.saveAll(batchParams);
     }
 
-    // epoch milliseconds → ISO-8601 문자열
-    // PostgreSQL ?::timestamptz 가 문자열을 받으므로 변환 필요
+    // epoch milliseconds → ISO-8601 문자열 (PostgreSQL ?::timestamptz 입력용)
     private String toIso(String epochMs) {
         if (epochMs == null || epochMs.isBlank()) return null;
         return Instant.ofEpochMilli(Long.parseLong(epochMs)).toString();

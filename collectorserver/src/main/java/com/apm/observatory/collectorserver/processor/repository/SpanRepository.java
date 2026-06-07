@@ -17,21 +17,25 @@ public class SpanRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    // spans PK는 span_id 단일 컬럼 — record 불필요, String으로 충분
-    // batch insert — SELECT로 중복 제거 후 신규 건만 INSERT
-    // 멱등성(Idempotency) 보장 — PEL 재처리 시 중복 건 안전하게 스킵
+    /**
+     * span 배치를 멱등하게 저장한다. 현재 배치의 span_id 중 이미 저장된 것을 조회해
+     * 빼고, 신규 건만 INSERT 한다. PEL 재처리로 같은 메시지가 다시 와도 중복 INSERT
+     * 없이 스킵된다.
+     *
+     * <p>spans의 PK는 span_id 단일 컬럼이라 String Set으로 중복을 판정한다. 복합 PK를
+     * 쓰는 metrics·logs는 같은 판정을 record로 묶는다.
+     *
+     * @param batchParams 저장할 span 행 목록. 각 Object[]의 첫 항목이 span_id다
+     */
     public void saveAll(List<Object[]> batchParams) {
         if (batchParams.isEmpty()) return;
 
-        // 현재 배치의 span_id Set 구성
         Set<String> currentIds = batchParams.stream()
                 .map(p -> (String) p[0])
                 .collect(Collectors.toSet());
 
-        // 이미 존재하는 span_id 조회
         Set<String> existingIds = findExistingIds(currentIds);
 
-        // 차집합 — 신규 건만 추출
         List<Object[]> newParams = batchParams.stream()
                 .filter(p -> !existingIds.contains((String) p[0]))
                 .toList();
