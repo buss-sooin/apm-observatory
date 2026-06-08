@@ -3,6 +3,7 @@ package com.apm.observatory.aipipeline.analysis.prompt;
 import com.apm.observatory.aipipeline.analysis.model.CollapseIncident;
 import com.apm.observatory.aipipeline.config.AiPipelineConfig.Prompt;
 
+/** 붕괴 사건용 프롬프트 전략. 사용자 프롬프트에 자원·응답 급등 수치를 채운다. */
 public class CollapsePromptStrategy implements PromptBuildStrategy {
 
     private final CollapseIncident incident;

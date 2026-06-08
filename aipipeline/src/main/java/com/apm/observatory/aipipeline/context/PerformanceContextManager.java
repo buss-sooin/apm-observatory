@@ -36,6 +36,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 앱별 성능 분석 한 사이클을 조립하는 오케스트레이터.
+ *
+ * <p>스케줄러가 앱 이름을 넘기면 threshold와 baseline 윈도우를 정하고,
+ * {@link PerformanceAnalysisPipelineContext} Step Builder로 설정·baseline·
+ * snapshot·이상탐지·추세전달 단계를 차례로 실행한다.
+ *
+ * <p>{@code activeTrends}는 앱별 누적 추세(erosion 판정용)를 들고 있다가
+ * erosion 윈도우가 지나면 새 추세로 교체한다. 분석에 필요한 협력 객체는
+ * {@code @PostConstruct} 시점에 {@link AnalysisDependencies} 한 묶음으로
+ * 구성해 매 사이클 재사용한다.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -59,6 +71,11 @@ public class PerformanceContextManager {
 
     private AnalysisDependencies dependencies;
 
+    /**
+     * 협력 객체를 {@link AnalysisDependencies}로 묶고, 모니터링 앱마다
+     * 추세 상태를 초기화한다. erosion 분석 주기가 스케줄러 주기보다 크지
+     * 않으면(추세를 쌓을 구간이 안 나오므로) 기동을 막는다.
+     */
     @PostConstruct
     void init() {
         if (config.window().erosionMinutes() <= config.scheduler().intervalMinutes()) {
@@ -92,6 +109,13 @@ public class PerformanceContextManager {
         log.info("PerformanceContextManager 초기화 완료 모니터링 앱 수={}", activeTrends.size());
     }
 
+    /**
+     * 한 앱의 분석 한 사이클. threshold를 조회하고 baseline·recent 윈도우를
+     * 정한 뒤 분석 파이프라인을 실행하고, erosion 윈도우가 만료된 추세는
+     * 새 추세로 교체한다.
+     *
+     * @param appName 분석 대상 앱 이름
+     */
     public void process(String appName) {
         ThresholdConfig threshold = thresholdConfigPort.findByAppName(appName)
                 .orElseThrow(() -> new IllegalArgumentException("threshold_config 없음 app=" + appName));
@@ -102,9 +126,6 @@ public class PerformanceContextManager {
         Instant now = Instant.now();
         Instant recentStart = now.minus(config.window().recentMinutes(), ChronoUnit.MINUTES);
 
-        // 의도: business_cycle 설정 있으면 전날 동시간대를 baseline으로 사용
-        // 시간대별 트래픽 패턴이 뚜렷한 서비스에서 오탐 방지
-        // 없으면 최근 N분 평균 사용 (기본 동작)
         Instant[] baselineWindow = resolveBaselineWindow(appName, now);
         Instant baselineStart = baselineWindow[0];
         Instant baselineEnd = baselineWindow[1];
@@ -142,9 +163,14 @@ public class PerformanceContextManager {
         }
     }
 
-    // 의도: business_cycle 존재 여부에 따라 baseline 시간 윈도우 결정
-    // business_cycle 있음 → [어제 동시각 - recentMinutes, 어제 동시각]
-    // business_cycle 없음 → [now - baselineMinutes, now]
+    /**
+     * baseline 비교 구간을 정한다. business_cycle이 설정돼 있고 현재 시각이
+     * 그 사이클 안이면 전날 동시간대를 baseline으로 쓰고(시간대별 트래픽
+     * 패턴이 뚜렷한 서비스의 오탐 방지), 그 밖이거나 설정이 없으면 최근
+     * {@code baselineMinutes} 구간을 쓴다.
+     *
+     * @return {@code [baselineStart, baselineEnd]} 두 원소 배열
+     */
     private Instant[] resolveBaselineWindow(String appName, Instant now) {
         Optional<BusinessCycle> cycle = businessCyclePort.findByAppName(appName);
 
@@ -153,7 +179,7 @@ public class PerformanceContextManager {
             LocalTime nowTime = nowLocal.toLocalTime();
             BusinessCycle bc = cycle.get();
 
-            // 비즈니스 사이클 범위 안에 있을 때만 전날 동시간대 적용
+            // 사이클 안 → 전날 동시간대
             if (!nowTime.isBefore(bc.cycleStart()) && !nowTime.isAfter(bc.cycleEnd())) {
                 Instant yesterdayNow = now.minus(1, ChronoUnit.DAYS);
                 Instant baselineEnd = yesterdayNow;
@@ -162,7 +188,7 @@ public class PerformanceContextManager {
                 return new Instant[]{baselineStart, baselineEnd};
             }
 
-            // 비즈니스 사이클 범위 밖이면 기본값 사용
+            // 사이클 밖 → 아래 기본 윈도우로
             log.debug("business_cycle 범위 밖 — 기본 baseline 적용 app={}", appName);
         }
 

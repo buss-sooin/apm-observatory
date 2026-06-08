@@ -18,6 +18,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * {@link AiAnalysisResultPort} 구현. AI 호출이 성공하면 분석 결과·raw 응답·근거
+ * (span·metrics evidence)를 함께 저장하고, 실패하면 raw 응답만 남긴다.
+ */
 @Component
 @RequiredArgsConstructor
 public class AiAnalysisResultAdapter implements AiAnalysisResultPort {
@@ -85,7 +89,7 @@ public class AiAnalysisResultAdapter implements AiAnalysisResultPort {
     // ── evidence 저장 ─────────────────────────────────────────────
 
     private void saveSpanEvidence(String analysisId,
-                                  List<com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.SpanSnapshot> spans) {
+                                  List<SpanSnapshot> spans) {
         spans.forEach(span ->
                 spanEvidenceRepository.save(AiAnalysisSpanEvidenceEntity.builder()
                         .id(UUID.randomUUID().toString())
@@ -126,8 +130,6 @@ public class AiAnalysisResultAdapter implements AiAnalysisResultPort {
 
     // ── 공통 builder ──────────────────────────────────────────────
 
-    // fusionCriteria는 AnalysisType으로 받아서 getValue()로 DB 저장
-    // 코드 흐름에서 saveCollapseResult → COLLAPSE → getValue()=1 로 의미가 드러남
     private AiAnalysisResultEntity buildAnalysisEntity(
             String analysisId, AiCallResult aiCallResult,
             String appName, AnalysisType fusionCriteria,

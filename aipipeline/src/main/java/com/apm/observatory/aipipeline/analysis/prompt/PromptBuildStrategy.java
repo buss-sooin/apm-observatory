@@ -2,15 +2,19 @@ package com.apm.observatory.aipipeline.analysis.prompt;
 
 import com.apm.observatory.aipipeline.config.AiPipelineConfig.Prompt;
 
+/**
+ * 분석 종류별 AI 프롬프트 조립 전략. 시스템 프롬프트 조립(공통)은 인터페이스가
+ * 맡고, 사용자 프롬프트(사건별 데이터)는 각 전략이 채운다.
+ *
+ * <p>시스템 프롬프트는 {@link Prompt} 주입값(role·language·responseFormat 등)을
+ * 조합해 만들며, additionalInstructions가 비어 있으면 건너뛴다.
+ */
 public interface PromptBuildStrategy {
 
     default String build() {
         return buildSystemPrompt() + "\n" + buildUserPrompt();
     }
 
-    // 의도: default 메서드 구조 유지 — 공통 행위는 인터페이스가 책임
-    // 내부 구현만 하드코딩 리터럴 → Prompt 주입값 조합으로 교체
-    // additionalInstructions는 null/blank면 건너뜀
     default String buildSystemPrompt() {
         Prompt prompt = getPrompt();
         StringBuilder sb = new StringBuilder();
@@ -24,10 +28,10 @@ public interface PromptBuildStrategy {
         return sb.toString();
     }
 
-    // 의도: 각 전략 클래스가 Prompt를 제공하는 책임을 가짐
-    // interface는 조합 방식을 정의, 전략은 재료를 제공
+    /** 전략별 {@link Prompt} 설정을 공급한다. */
     Prompt getPrompt();
 
+    /** 사건 데이터로 사용자 프롬프트를 만든다. */
     String buildUserPrompt();
 
 }

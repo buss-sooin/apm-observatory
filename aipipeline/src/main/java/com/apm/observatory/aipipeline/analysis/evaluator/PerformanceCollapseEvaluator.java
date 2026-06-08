@@ -15,6 +15,10 @@ import java.util.OptionalDouble;
 
 import static com.apm.observatory.aipipeline.analysis.status.ResourceStatus.*;
 
+/**
+ * 성능 붕괴 판정기. 자원(cpu·heap)과 응답시간이 모두 baseline 대비 급등했는지 보고,
+ * 둘 다 이상일 때만 붕괴로 판정한다.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -22,6 +26,7 @@ public class PerformanceCollapseEvaluator {
 
     private final AppResponseTimeCalculator appResponseTimeCalculator;
 
+    /** 자원(cpu·heap) 평균이 baseline의 {@code spikeMultiplier}배를 넘으면 SPIKED. 수집 metrics 없으면 NODATA. */
     public ResourceStatus isResourceSpiked(List<MetricsSnapshot> recentMetrics,
                                     double baselineCpuAvg,
                                     double baselineHeapAvg,
@@ -31,7 +36,6 @@ public class PerformanceCollapseEvaluator {
             return NODATA;
         }
 
-        // 단일 순회로 CPU, Heap 합계 동시 계산
         double sumCpu = 0.0, sumHeap = 0.0;
         for (MetricsSnapshot m : recentMetrics) {
             sumCpu += m.cpuUsage();
@@ -85,6 +89,7 @@ public class PerformanceCollapseEvaluator {
         return ResponseStatus.NORMAL;
     }
 
+    /** 자원·응답 상태를 합쳐 판정. NODATA 포함 시 UNDETERMINABLE, 둘 다 이상(SPIKED·SLOWED)이면 DETECTED, 그 밖이면 NOT_DETECTED. */
     public DetectionStatus evaluate(ResourceStatus resourceStatus,
                                     ResponseStatus responseStatus) {
         if (resourceStatus == NODATA ||

@@ -10,14 +10,13 @@ import java.util.List;
 
 public interface MetricsRepository extends JpaRepository<MetricsEntity, MetricsEntity.MetricsPK> {
 
-    // 최근 N분 특정 앱의 Metrics 조회
     List<MetricsEntity> findByAppNameAndTimestampBetween(
             String appName,
             Instant start,
             Instant end
     );
 
-    // 평소 기준 CPU 평균 조회 (선형 회귀, 급등 판단용)
+    /** 기간 평균 CPU. baseline 비교 기준값으로 쓴다. */
     @Query("SELECT AVG(m.cpuUsage) FROM MetricsEntity m " +
             "WHERE m.appName = :appName " +
             "AND m.timestamp BETWEEN :start AND :end")
@@ -27,7 +26,7 @@ public interface MetricsRepository extends JpaRepository<MetricsEntity, MetricsE
             @Param("end") Instant end
     );
 
-    // 평소 기준 메모리 사용률 평균 조회
+    /** 기간 평균 heap 사용량. baseline 비교 기준값으로 쓴다. */
     @Query("SELECT AVG(m.heapUsed) FROM MetricsEntity m " +
             "WHERE m.appName = :appName " +
             "AND m.timestamp BETWEEN :start AND :end")

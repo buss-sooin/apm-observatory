@@ -6,6 +6,7 @@ import lombok.*;
 import java.time.Instant;
 import java.time.LocalTime;
 
+/** business_cycle 테이블 매핑(읽기 전용). 앱별 영업 주기·피크 구간을 보관한다. */
 @Entity
 @Table(name = "business_cycle")
 @Getter

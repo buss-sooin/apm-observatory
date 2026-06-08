@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+/** threshold_config 테이블 매핑(읽기 전용). 앱별 임계값을 보관한다. */
 @Entity
 @Table(name = "threshold_config")
 @Getter

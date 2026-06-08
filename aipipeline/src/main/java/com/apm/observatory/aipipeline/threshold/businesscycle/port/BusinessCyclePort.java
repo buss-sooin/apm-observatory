@@ -4,6 +4,7 @@ import com.apm.observatory.aipipeline.threshold.businesscycle.model.BusinessCycl
 
 import java.util.Optional;
 
+/** business_cycle 조회 계약. */
 public interface BusinessCyclePort {
     Optional<BusinessCycle> findByAppName(String appName);
 }

@@ -19,6 +19,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
+/**
+ * Ollama에 분석을 요청하고 응답을 파싱·검증하는 서비스. 사건 종류별 analyze를
+ * 제공하며, 내부적으로 프롬프트 전략을 만들어 한 경로(call)로 호출한다.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -40,6 +44,11 @@ public class OllamaAnalysisService {
         return call(AnalysisPromptBuilderProvider.of(incident, aiPipelineConfig.prompt()));
     }
 
+    /**
+     * 프롬프트를 만들어 Ollama를 호출하고 결과를 {@link AiCallResult}로 돌려준다.
+     * JSON 파싱 실패와 필드 검증 실패는 모두 {@link OllamaResponseException}으로
+     * 통일해 한 catch에서 처리하며, 실패해도 받은 raw 응답은 보존한다.
+     */
     private AiCallResult call(PromptBuildStrategy strategy) {
         String rawResponse = null;
         try {
@@ -55,13 +64,9 @@ public class OllamaAnalysisService {
             try {
                 result = objectMapper.readValue(rawResponse, AiAnalysisResult.class);
             } catch (JsonProcessingException e) {
-                // 의도: Ollama가 JSON 형식이 아닌 응답을 돌려준 경우
-                // cause 보존하여 근본 원인 추적 가능하게 wrap
                 throw new OllamaParseException("Ollama JSON 파싱 실패: " + e.getMessage(), e);
             }
 
-            // 의도: 파싱은 성공했으나 필수 필드 누락인 경우
-            // 예외로 던져서 catch (OllamaResponseException e) 흐름으로 통일
             if (!result.isValid()) {
                 throw new OllamaValidationException(
                         "Ollama 응답 필드 검증 실패 - 필수 필드 null/blank: " + rawResponse
@@ -71,8 +76,6 @@ public class OllamaAnalysisService {
             return new AiCallResult(ParseStatus.SUCCESS, rawResponse, result, null);
 
         } catch (OllamaResponseException e) {
-            // 의도: 수신측(Ollama) 책임의 모든 예외를 여기서 수신
-            // raw_response는 가능한 한 보존 (파싱 실패여도 rawResponse는 있음)
             log.error("Ollama 응답 처리 실패 [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
             ParseStatus status = (e instanceof OllamaParseException)
                     ? ParseStatus.JSON_PARSE_FAILED

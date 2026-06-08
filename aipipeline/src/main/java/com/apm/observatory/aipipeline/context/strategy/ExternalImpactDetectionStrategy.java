@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.Instant;
 import java.util.List;
 
+/** 외부 연동 구간 지연·자원 상태로 외부 영향을 판정하고, 감지 시 AI 분석 결과를 저장하는 전략. */
 @Slf4j
 public class ExternalImpactDetectionStrategy implements AnomalyDetectionStrategy {
 

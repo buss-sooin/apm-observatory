@@ -12,9 +12,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-// 의도: Ollama 서버 연결 상태만 전담하는 컴포넌트
-// OllamaAnalysisService와 분리 — 연결 상태 관리와 AI 호출 로직은 다른 책임
-// isConnected()로 스케줄러가 AI 호출 전 연결 여부를 확인
+/**
+ * Ollama 서버 연결 상태만 전담하는 컴포넌트. 기동 시 헬스 체크하고, 실패하면
+ * 일정 간격으로 재접속을 시도한다. 스케줄러는 AI 호출 전 {@link #isConnected()}로
+ * 연결 여부를 확인한다. 연결 관리와 AI 호출(OllamaAnalysisService)은 책임이 달라
+ * 분리했다.
+ */
 @Slf4j
 @Component
 public class OllamaConnectionManager {

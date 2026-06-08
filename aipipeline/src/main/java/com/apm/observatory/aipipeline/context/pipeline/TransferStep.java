@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.Instant;
 import java.util.List;
 
+/** 최근 지표를 추세에 누적하고, erosion 윈도우가 만료되면 추세를 판정하는 단계. */
 @Slf4j
 public class TransferStep {
 
@@ -43,6 +44,11 @@ public class TransferStep {
         }
     }
 
+    /**
+     * 누적된 추세 포인트로 erosion을 판정한다. slope(cpu·span)를 여기서 한 번만
+     * 계산해 {@code slopeMinPositive}와 함께 {@link SlopeRecord}로 묶으므로,
+     * 추세 전략은 이 한 객체만 받아 판정과 저장을 수행한다.
+     */
     private void evaluateTrend(double slopeMinPositive) {
         List<ErosionDataPoint> points = context.trend().getPoints();
 
@@ -51,9 +57,6 @@ public class TransferStep {
         List<Double> spanValues = points.stream()
                 .mapToDouble(ErosionDataPoint::avgSpanDuration).boxed().toList();
 
-        // 의도: slope를 여기서 한 번만 계산 + slopeMinPositive를 SlopeRecord에 캡슐화
-        // → 전략은 SlopeRecord 하나만 받아서 판단과 저장 모두 수행
-        // → 기존 TransferStep → detectTrend → toTrendStatus 파라미터 전달 제거
         SlopeRecord slopeRecord = new SlopeRecord(
                 context.appName(),
                 dependencies.erosionEvaluator().calculateSlope(cpuValues),

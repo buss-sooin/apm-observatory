@@ -10,6 +10,7 @@ import com.apm.observatory.aipipeline.threshold.model.ThresholdConfig;
 
 import java.time.Instant;
 
+/** baseline 지표를 적재하는 단계. */
 public class BaselineStep {
 
     private final AnalysisDependencies dependencies;
@@ -27,7 +28,6 @@ public class BaselineStep {
         this.threshold = threshold;
     }
 
-    // Functional: 람다가 로딩 방식 결정, Step은 실행만 담당
     public SnapshotStep loadBaseline(BaselineLoader loader,
                                      Instant start,
                                      Instant end,

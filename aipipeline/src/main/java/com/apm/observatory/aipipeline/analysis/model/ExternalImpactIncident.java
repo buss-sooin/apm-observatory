@@ -6,6 +6,7 @@ import com.apm.observatory.aipipeline.performance.port.ExternalImpactDataPort.Me
 import java.time.Instant;
 import java.util.List;
 
+/** 외부 영향 사건 — AI 분석 입력(외부 span·baseline·평균). */
 public record ExternalImpactIncident(
         String appName,
         Instant analysisStart,

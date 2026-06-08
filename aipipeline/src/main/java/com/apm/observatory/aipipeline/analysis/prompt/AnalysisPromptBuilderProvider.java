@@ -6,6 +6,10 @@ import com.apm.observatory.aipipeline.analysis.model.ExternalImpactIncident;
 import com.apm.observatory.aipipeline.config.AiPipelineConfig.Prompt;
 import org.springframework.stereotype.Component;
 
+/**
+ * 사건 타입에 맞는 {@link PromptBuildStrategy}를 만들어 주는 팩토리.
+ * 오버로딩으로 incident 종류별 전략을 고른다.
+ */
 @Component
 public class AnalysisPromptBuilderProvider {
 

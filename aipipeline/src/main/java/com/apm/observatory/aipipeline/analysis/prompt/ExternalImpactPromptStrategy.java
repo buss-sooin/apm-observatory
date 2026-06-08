@@ -3,6 +3,7 @@ package com.apm.observatory.aipipeline.analysis.prompt;
 import com.apm.observatory.aipipeline.analysis.model.ExternalImpactIncident;
 import com.apm.observatory.aipipeline.config.AiPipelineConfig.Prompt;
 
+/** 외부 영향 사건용 프롬프트 전략. 사용자 프롬프트에 외부 구간 지연 수치를 채운다. */
 public class ExternalImpactPromptStrategy implements PromptBuildStrategy {
 
     private final ExternalImpactIncident incident;

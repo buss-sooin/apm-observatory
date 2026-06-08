@@ -5,6 +5,7 @@ import com.apm.observatory.aipipeline.context.model.AnalysisContext;
 import com.apm.observatory.aipipeline.context.model.AnalysisDependencies;
 import lombok.extern.slf4j.Slf4j;
 
+/** 현재 스냅샷만으로 판정하는 이상(붕괴·외부영향)을 탐지하는 단계. */
 @Slf4j
 public class AnalyzeStep {
 

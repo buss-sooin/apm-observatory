@@ -11,6 +11,11 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * threshold_config 조회 어댑터. Entity를 도메인 {@link ThresholdConfig}로 옮기며,
+ * 앱별로 지정되지 않은(null) 임계값은 {@link AiPipelineConfig}의 전역 기본값으로
+ * 채운다.
+ */
 @Component
 @RequiredArgsConstructor
 public class ThresholdConfigAdapter implements ThresholdConfigPort {

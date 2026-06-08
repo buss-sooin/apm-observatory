@@ -6,6 +6,7 @@ import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.SpanS
 import java.time.Instant;
 import java.util.List;
 
+/** 성능 붕괴 사건 — AI 분석 입력(구간·baseline·최근 평균·원시 스냅샷). */
 public record CollapseIncident(
         String appName,
         Instant analysisStart,

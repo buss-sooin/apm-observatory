@@ -45,8 +45,8 @@ public class AppResponseTimeCalculator {
      * 한 trace에서 외부 호출 시간을 뺀 응답시간을 구한다.
      *
      * <p>ROOT가 없으면 응답시간을 정의할 수 없어 빈 값을 돌려준다. EXTERNAL 합이 ROOT보다
-     * 커서 음수가 나오면 평탄화된 중첩 호출의 측정 한계로 보고 0으로 클램핑하며, 후속 union
-     * 산식 도입 판단의 단서로 trace_id와 값을 warn 로깅한다.
+     * 커서 음수가 나오면 평탄화된 중첩 호출의 측정 한계로 보고 0으로 클램핑하며, trace_id와
+     * 값을 warn 로깅한다.
      *
      * @param traceId    로깅용 trace 식별자
      * @param traceSpans 한 trace에 속한 span 목록

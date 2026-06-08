@@ -12,6 +12,15 @@ import com.apm.observatory.aipipeline.context.strategy.TrendDetectionStrategy;
 
 import java.util.List;
 
+/**
+ * 분석에 필요한 협력 객체(평가기·계산기·AI 서비스·저장 Port·전략 목록)를
+ * 한 묶음으로 들고 다니는 의존성 컨테이너. PerformanceContextManager가
+ * 기동 시 한 번 구성해 매 사이클 재사용한다.
+ *
+ * <p>전략들은 Spring 빈이 아니라 {@code new}로 생성되는 일반 객체라 외부
+ * 의존성을 직접 주입받지 못한다. 그래서 전략이 쓰는 Port까지 이 묶음에
+ * 담아, 전략이 dependencies를 통해서만 외부에 접근하도록 한다.
+ */
 public record AnalysisDependencies(
         PerformanceCollapseEvaluator collapseEvaluator,
         AppResponseTimeCalculator appResponseTimeCalculator,
@@ -19,8 +28,6 @@ public record AnalysisDependencies(
         PerformanceErosionEvaluator erosionEvaluator,
         OllamaAnalysisService ollamaAnalysisService,
         AiAnalysisResultPort aiAnalysisResultPort,
-        // 의도: ErosionDetectionStrategy가 new로 생성되는 일반 객체라 Spring 주입 불가
-        // dependencies를 통해서만 외부 의존성에 접근하는 구조 일관성 유지
         ErosionSlopePort erosionSlopePort,
         List<AnomalyDetectionStrategy> detectionStrategies,
         List<TrendDetectionStrategy> trendStrategies

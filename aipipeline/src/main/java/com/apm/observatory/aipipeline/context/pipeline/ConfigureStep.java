@@ -4,6 +4,7 @@ import com.apm.observatory.aipipeline.context.model.AnalysisDependencies;
 import com.apm.observatory.aipipeline.performance.model.PerformanceTrend;
 import com.apm.observatory.aipipeline.threshold.model.ThresholdConfig;
 
+/** threshold를 받아 baseline 적재 단계로 넘기는 첫 단계. */
 public class ConfigureStep {
 
     private final AnalysisDependencies dependencies;

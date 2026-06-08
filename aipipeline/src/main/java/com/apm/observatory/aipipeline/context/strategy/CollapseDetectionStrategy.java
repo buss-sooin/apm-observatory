@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.time.Instant;
 
+/** 자원·응답 급등으로 성능 붕괴를 판정하고, 감지 시 AI 분석 결과를 저장하는 전략. */
 @Slf4j
 public class CollapseDetectionStrategy implements AnomalyDetectionStrategy {
 

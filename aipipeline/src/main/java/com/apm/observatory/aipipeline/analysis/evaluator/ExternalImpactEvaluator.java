@@ -10,10 +10,15 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+/**
+ * 외부 영향 판정기. 자원은 정상(임계값 이하)인데 외부 연동 구간만 baseline 대비
+ * 느려졌는지 보고, 그럴 때만 외부 영향으로 판정한다.
+ */
 @Slf4j
 @Component
 public class ExternalImpactEvaluator {
 
+    /** 자원(cpu·메모리율) 평균이 임계값을 넘으면 SPIKED. 수집 metrics 없으면 NODATA. */
     public ResourceStatus checkResourceStatus(List<MetricsSnapshot> recentMetrics,
                                        double cpuThreshold,
                                        double memoryThreshold) {
@@ -39,6 +44,7 @@ public class ExternalImpactEvaluator {
         return ResourceStatus.NORMAL;
     }
 
+    /** EXTERNAL span 평균이 baseline의 {@code externalRatioMultiplier}배를 넘으면 SLOWED. 수집 span 없으면 NODATA. */
     public ResponseStatus checkExternalSpanStatus(List<ExternalSpanSnapshot> recentExternalSpans,
                                            double baselineExternalAvg,
                                            double externalRatioMultiplier) {
@@ -61,6 +67,7 @@ public class ExternalImpactEvaluator {
         return ResponseStatus.NORMAL;
     }
 
+    /** 자원이 정상(NORMAL)인데 외부 span이 SLOWED일 때만 DETECTED. NODATA 포함 시 UNDETERMINABLE. */
     public DetectionStatus evaluate(ResourceStatus resourceStatus,
                                     ResponseStatus responseStatus) {
         if (resourceStatus == ResourceStatus.NODATA ||

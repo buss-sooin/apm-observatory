@@ -12,6 +12,7 @@ import com.apm.observatory.aipipeline.threshold.model.ThresholdConfig;
 
 import java.time.Instant;
 
+/** 최근 구간 스냅샷을 적재하고 분석 컨텍스트를 조립하는 단계. */
 public class SnapshotStep {
 
     private final AnalysisDependencies dependencies;
@@ -32,7 +33,6 @@ public class SnapshotStep {
         this.baseline = baseline;
     }
 
-    // Functional: 람다가 로딩 방식 결정, Step은 실행만 담당
     public AnalyzeStep loadSnapshot(SnapshotLoader loader,
                                     Instant start,
                                     Instant end,

@@ -5,9 +5,13 @@ import com.apm.observatory.aipipeline.analysis.status.DetectionStatus;
 import com.apm.observatory.aipipeline.context.model.AnalysisContext;
 import com.apm.observatory.aipipeline.context.model.AnalysisDependencies;
 
-// 의도: 시계열 포인트 기반 추세(Trend) 감지 전략의 계약
-// 기울기 계산으로 시간 흐름에 따른 완만한 변화를 감지하는 전략들이 구현
-// SlopeRecord는 TransferStep에서 미리 계산해서 전달 → 전략 내 중복 계산 제거
+/**
+ * 시계열 포인트 기반 추세 감지 전략의 계약.
+ *
+ * <p>누적 구간의 기울기로 완만한 변화를 판정하는 전략들이 구현한다.
+ * 기울기는 호출자(TransferStep)가 {@link SlopeRecord}로 미리 계산해
+ * 넘기므로, 전략은 중복 계산 없이 판정만 한다.
+ */
 public interface TrendDetectionStrategy {
 
     DetectionStatus detectTrend(SlopeRecord slopeRecord, AnalysisDependencies dependencies);
@@ -15,8 +19,10 @@ public interface TrendDetectionStrategy {
     void onTrendDetected(SlopeRecord slopeRecord, AnalysisContext context,
                          AnalysisDependencies dependencies);
 
-    // 의도: DETECTED/NOT_DETECTED 무관하게 slope 저장이 필요한 전략만 오버라이드
-    // 기본 구현은 아무것도 안 함 → Erosion 외 전략은 건드리지 않아도 됨
+    /**
+     * 미감지 시 후속 처리. 기본은 아무것도 하지 않으며, 미감지 상태에서도
+     * slope 저장이 필요한 전략만 오버라이드한다.
+     */
     default void onTrendNotDetected(SlopeRecord slopeRecord, AnalysisDependencies dependencies) {}
 
 }

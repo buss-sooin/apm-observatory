@@ -6,6 +6,7 @@ import lombok.*;
 import java.io.Serializable;
 import java.time.Instant;
 
+/** logs 테이블 매핑(읽기 전용). (timestamp, app_name, thread_name) 복합 PK. */
 @Entity
 @Table(name = "logs")
 @IdClass(LogEntity.LogPK.class)

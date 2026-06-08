@@ -5,6 +5,7 @@ import com.apm.observatory.aipipeline.analysis.model.CollapseIncident;
 import com.apm.observatory.aipipeline.analysis.model.ErosionIncident;
 import com.apm.observatory.aipipeline.analysis.model.ExternalImpactIncident;
 
+/** AI 분석 결과 저장 계약(사건 종류별). */
 public interface AiAnalysisResultPort {
 
     void saveCollapseResult(AiCallResult aiCallResult, CollapseIncident incident);

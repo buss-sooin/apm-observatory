@@ -10,14 +10,12 @@ import java.util.List;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, String> {
 
-    // 최근 N분 특정 앱의 전체 Span 조회
     List<SpanEntity> findByAppNameAndStartTimeBetween(
             String appName,
             Instant start,
             Instant end
     );
 
-    // 최근 N분 특정 span_type의 Span 조회 (EXTERNAL 필터링용)
     List<SpanEntity> findByAppNameAndSpanTypeAndStartTimeBetween(
             String appName,
             String spanType,
@@ -25,7 +23,7 @@ public interface SpanRepository extends JpaRepository<SpanEntity, String> {
             Instant end
     );
 
-    // 평소 기준 특정 span_type 평균 응답시간
+    /** 기간 평균 응답시간(span_type별). baseline 비교 기준값으로 쓴다. */
     @Query("SELECT AVG(s.durationMs) FROM SpanEntity s " +
             "WHERE s.appName = :appName " +
             "AND s.spanType = :spanType " +

@@ -9,6 +9,13 @@ import com.apm.observatory.aipipeline.threshold.model.ThresholdConfig;
 
 import java.util.List;
 
+/**
+ * 한 번의 분석에 필요한 입력을 한데 묶은 컨텍스트.
+ *
+ * <p>threshold와 baseline은 Builder가 받아 개별 값으로 분해해 담고,
+ * snapshot은 적재 후 {@link #withSnapshot}으로 최근 구간 데이터를 채운
+ * 새 인스턴스를 만든다(record 불변).
+ */
 public record AnalysisContext(
         String appName,
         PerformanceTrend trend,
@@ -66,7 +73,6 @@ public record AnalysisContext(
             return this;
         }
 
-        // ThresholdConfig 객체를 받아서 내부에서 분해
         public Builder threshold(ThresholdConfig threshold) {
             this.spikeMultiplier = threshold.spanDurationMultiplier();
             this.cpuThreshold = threshold.cpuThreshold();
@@ -75,7 +81,6 @@ public record AnalysisContext(
             return this;
         }
 
-        // BaselineMetrics 객체를 받아서 내부에서 분해
         public Builder baseline(BaselineMetrics baseline) {
             this.baselineCpuAvg = baseline.baselineCpuAvg();
             this.baselineHeapAvg = baseline.baselineHeapAvg();

@@ -5,6 +5,7 @@ import lombok.*;
 
 import java.time.Instant;
 
+/** ai_analysis_metrics_evidence 테이블 매핑. 분석이 근거로 삼은 metrics를 결과(analysis_id)와 연결해 남긴다. metric은 (timestamp, app_name)로 참조한다. */
 @Entity
 @Table(name = "ai_analysis_metrics_evidence")
 @Getter
@@ -17,11 +18,9 @@ public class AiAnalysisMetricsEvidenceEntity {
     @Column(name = "id")
     private String id;
 
-    // 의도: AI 분석 결과와 연결 — "이 분석이 어떤 Metrics를 근거로 했는가" 역추적
     @Column(name = "analysis_id", nullable = false)
     private String analysisId;
 
-    // 의도: metrics 테이블 복합PK (timestamp + app_name) 참조
     @Column(name = "metric_timestamp", nullable = false)
     private Instant metricTimestamp;
 

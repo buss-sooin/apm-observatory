@@ -6,6 +6,7 @@ import lombok.*;
 
 import java.time.Instant;
 
+/** ai_analysis_results 테이블 매핑. AI 분석 결과를 저장한다. */
 @Entity
 @Table(name = "ai_analysis_results")
 @Getter
@@ -27,13 +28,9 @@ public class AiAnalysisResultEntity {
     @Column(name = "app_name")
     private String appName;
 
-    // DB에는 int(1,2,3)로 저장 — AnalysisType.getValue()로 저장
-    // 읽을 때는 fusionCriteriaType()으로 AnalysisType 변환
     @Column(name = "fusion_criteria")
     private Integer fusionCriteria;
 
-    // AI가 판단한 패턴 유형 — DB에는 int로 저장
-    // 읽을 때는 patternAnalysisType()으로 AnalysisType 변환
     @Column(name = "pattern_type")
     private Integer patternType;
 
@@ -58,10 +55,12 @@ public class AiAnalysisResultEntity {
     @Column(name = "analysis_end_time")
     private Instant analysisEndTime;
 
+    /** fusion_criteria(int)를 {@link AnalysisType}으로 변환한다. */
     public AnalysisType fusionCriteriaType() {
         return AnalysisType.from(fusionCriteria);
     }
 
+    /** pattern_type(int)을 {@link AnalysisType}으로 변환한다. */
     public AnalysisType patternAnalysisType() {
         return AnalysisType.from(patternType);
     }

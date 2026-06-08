@@ -14,11 +14,10 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.Instant;
 import java.util.List;
 
+/** 누적 추세의 기울기로 성능 침식(erosion)을 판정하는 전략. 미감지 시에도 slope를 저장해 추세 흐름을 남긴다. */
 @Slf4j
 public class ErosionDetectionStrategy implements TrendDetectionStrategy {
 
-    // 의도: SlopeRecord에 slope 계산값과 판단 기준값(slopeMinPositive) 모두 포함
-    // → TransferStep에서 한 번만 계산하고 전달 → 중복 계산 제거
     @Override
     public DetectionStatus detectTrend(SlopeRecord slopeRecord, AnalysisDependencies dependencies) {
         TrendStatus resourceTrend = dependencies.erosionEvaluator()
@@ -47,7 +46,6 @@ public class ErosionDetectionStrategy implements TrendDetectionStrategy {
         dependencies.aiAnalysisResultPort().saveErosionResult(result, incident);
     }
 
-    // 의도: NOT_DETECTED일 때도 slope 저장 → 그래프에서 추세 흐름 시각화 가능
     @Override
     public void onTrendNotDetected(SlopeRecord slopeRecord, AnalysisDependencies dependencies) {
         log.debug("PerformanceErosion 미감지 slope 저장 app={}", slopeRecord.appName());

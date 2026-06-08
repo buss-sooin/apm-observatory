@@ -7,6 +7,7 @@ import com.apm.observatory.aipipeline.performance.port.PerformanceDataPort.SpanS
 import java.time.Instant;
 import java.util.List;
 
+/** 최근 구간 데이터(metrics·span·external)와 baseline 평균을 묶은 분석 입력 스냅샷. */
 public record PerformanceSnapshot(
         String appName,
         Instant startTime,

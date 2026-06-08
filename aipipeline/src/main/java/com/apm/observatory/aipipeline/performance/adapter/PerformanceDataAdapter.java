@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+/** {@link PerformanceDataPort} 구현. metrics·span 테이블을 조회해 스냅샷으로 옮기고, 집계 결과가 null이면 0으로 방어한다. */
 @Component
 @RequiredArgsConstructor
 public class PerformanceDataAdapter implements PerformanceDataPort {

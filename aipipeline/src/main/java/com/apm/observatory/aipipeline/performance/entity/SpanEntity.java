@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 
+/** spans 테이블 매핑(읽기 전용). */
 @Entity
 @Table(name = "spans")
 @Getter

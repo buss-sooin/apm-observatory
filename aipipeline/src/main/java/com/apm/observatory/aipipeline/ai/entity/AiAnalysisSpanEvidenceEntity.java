@@ -3,6 +3,7 @@ package com.apm.observatory.aipipeline.ai.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+/** ai_analysis_span_evidence 테이블 매핑. 분석이 근거로 삼은 span을 결과(analysis_id)와 연결해 남긴다. */
 @Entity
 @Table(name = "ai_analysis_span_evidence")
 @Getter
@@ -15,7 +16,6 @@ public class AiAnalysisSpanEvidenceEntity {
     @Column(name = "id")
     private String id;
 
-    // 의도: AI 분석 결과와 연결 — "이 분석이 어떤 Span을 근거로 했는가" 역추적
     @Column(name = "analysis_id", nullable = false)
     private String analysisId;
 

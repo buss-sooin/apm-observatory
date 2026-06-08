@@ -3,9 +3,13 @@ package com.apm.observatory.aipipeline.performance.port;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * 성능 분석에 쓰는 자원·Span 데이터 공급 계약.
+ * 조회 결과는 평가기가 판단에 바로 쓰는 순수 스냅샷이다.
+ */
 public interface PerformanceDataPort {
 
-    // 자원 스냅샷 (Evaluator가 판단에 쓰는 순수 데이터)
+    /** 자원 스냅샷(cpu·heap·disk). */
     record MetricsSnapshot(
             Instant timestamp,
             String appName,
@@ -16,7 +20,7 @@ public interface PerformanceDataPort {
             Long diskWriteBytes
     ) {}
 
-    // Span 스냅샷
+    /** Span 스냅샷. */
     record SpanSnapshot(
             String spanId,
             String traceId,
@@ -26,16 +30,12 @@ public interface PerformanceDataPort {
             Instant startTime
     ) {}
 
-    // 최근 Metrics 조회
     List<MetricsSnapshot> getRecentMetrics(String appName, Instant start, Instant end);
 
-    // 평소 기준 CPU 평균
     Double getBaselineCpuAvg(String appName, Instant start, Instant end);
 
-    // 평소 기준 메모리 평균
     Double getBaselineHeapAvg(String appName, Instant start, Instant end);
 
-    // 최근 Span 조회
     List<SpanSnapshot> getRecentSpans(String appName, Instant start, Instant end);
 
 }
