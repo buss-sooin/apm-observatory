@@ -10,6 +10,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * AI 분석 결과 조회와 Entity → Summary 변환을 담당한다. 도메인 판단 없는 단순 조회·변환이라
+ * Port 없이 Adapter만 둔다.
+ */
 @Component
 @RequiredArgsConstructor
 public class AiResultAdapter {
@@ -28,9 +32,10 @@ public class AiResultAdapter {
                 .map(this::toSummary);
     }
 
-    // 의도: Entity → Response 변환
-    // fusionCriteria, patternType 모두 int → AnalysisType enum으로 변환
-    // null 방어: AnalysisType.from()이 null 반환 가능 — 알 수 없는 값이 DB에 있는 경우
+    /**
+     * Entity를 Summary로 변환한다. fusionCriteria·patternType은 int를 AnalysisType으로 바꾸며,
+     * DB에 알 수 없는 값이 있으면 AnalysisType.from()이 null을 돌려준다.
+     */
     private AiResultSummary toSummary(AiAnalysisResultEntity e) {
         return new AiResultSummary(
                 e.getId(),

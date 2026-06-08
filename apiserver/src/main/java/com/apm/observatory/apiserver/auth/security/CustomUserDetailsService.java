@@ -11,6 +11,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+/**
+ * username으로 DB를 조회해 Spring Security가 이해하는 UserDetails로 변환한다
+ * (UserDetailsService 구현). JwtAuthenticationFilter가 매 요청마다 호출하므로 계정 존재
+ * 여부가 실시간으로 확인된다.
+ */
 @Service
 public class CustomUserDetailsService implements UserDetailsService {
 
@@ -20,8 +25,7 @@ public class CustomUserDetailsService implements UserDetailsService {
         this.userRepository = userRepository;
     }
 
-    // 의도: username으로 DB 조회 → Spring Security가 이해하는 UserDetails로 변환
-    // JwtAuthenticationFilter에서 매 요청마다 호출 → 계정 존재 여부 실시간 확인
+    /** 사용자를 찾지 못하면 UsernameNotFoundException을 던진다. */
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         UserEntity user = userRepository.findByUsername(username)

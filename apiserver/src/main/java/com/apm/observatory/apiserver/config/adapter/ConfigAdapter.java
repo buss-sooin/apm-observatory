@@ -12,6 +12,10 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * 임계값·비즈니스 사이클 설정의 저장·삭제를 담당한다. 외부 데이터 판단 없이 단순 저장/조회라
+ * 별도 Port 없이 Adapter만 둔다.
+ */
 @Component
 @RequiredArgsConstructor
 public class ConfigAdapter {
@@ -19,6 +23,7 @@ public class ConfigAdapter {
     private final ThresholdConfigRepository repository;
     private final BusinessCycleRepository businessCycleRepository;
 
+    /** 있으면 수정, 없으면 신규 생성한다. 신규 생성 시 null 필드는 기본값으로 채운다. */
     public ThresholdResponse upsertThreshold(ThresholdRequest request) {
         Optional<ThresholdConfigEntity> existing = repository.findByAppName(request.appName());
 
@@ -55,8 +60,7 @@ public class ConfigAdapter {
         );
     }
 
-    // 의도: upsert — app_name 없으면 신규 생성, 있으면 수정
-    // null이면 기존값 유지
+    /** 있으면 수정, 없으면 신규 생성한다(upsert). 수정 시 null 필드는 기존값을 유지한다. */
     public BusinessCycleResponse upsertBusinessCycle(BusinessCycleRequest request) {
         Optional<BusinessCycleEntity> existing = businessCycleRepository.findByAppName(request.appName());
 
@@ -89,8 +93,10 @@ public class ConfigAdapter {
         );
     }
 
-    // 의도: 삭제 시 aipipeline이 baseline fallback으로 돌아감
-    // "null로 upsert"가 아닌 명시적 삭제로 의도를 명확히 함
+    /**
+     * 비즈니스 사이클을 삭제한다. 삭제하면 aipipeline이 baseline fallback으로 돌아간다.
+     * null로 upsert하지 않고 명시적으로 삭제해 의도를 분명히 한다.
+     */
     public void deleteBusinessCycle(String appName) {
         businessCycleRepository.deleteByAppName(appName);
     }

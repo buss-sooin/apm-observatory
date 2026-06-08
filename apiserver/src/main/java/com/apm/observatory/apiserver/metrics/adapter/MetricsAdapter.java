@@ -14,6 +14,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * metrics·threshold_config·erosion_trend_slopes 세 테이블을 조합해 자원 현황·추세·요약을
+ * 만든다(MetricsPort 구현). 외부 경계(DB) 값의 null은 여기서 막는다. 집계 함수와 래퍼 타입은
+ * 결과가 없으면 null이라, Optional.ofNullable().orElse(기본값)으로 기본값으로 바꾼다.
+ */
 @Component
 @RequiredArgsConstructor
 public class MetricsAdapter implements MetricsPort {
@@ -28,7 +33,6 @@ public class MetricsAdapter implements MetricsPort {
                 .map(m -> new CurrentMetrics(
                         m.getId().getTimestamp(),
                         m.getId().getAppName(),
-                        // 의도: null 방어 - DB에 데이터 없으면 0.0 기본값
                         Optional.ofNullable(m.getCpuUsage()).orElse(0.0),
                         Optional.ofNullable(m.getHeapUsed()).orElse(0L),
                         Optional.ofNullable(m.getHeapMax()).orElse(0L),
@@ -49,13 +53,15 @@ public class MetricsAdapter implements MetricsPort {
                 .toList();
     }
 
+    /**
+     * 세 테이블을 조합해 SummaryMetrics를 만든다. threshold가 없으면 empty를 돌려 Controller가
+     * 404로 응답한다. 임계값 대비 수준(%)은 위젯에서 위험도를 표시하는 값이고, slope가 아직
+     * 없으면(Erosion 판단 전) 0.0으로 둬 추세 없음으로 표시한다.
+     */
     @Override
     public Optional<SummaryMetrics> summarizePerformance(String appName, Instant startTime, Instant endTime) {
-        // 의도: 세 테이블을 조합해서 SummaryMetrics 생성
-        // threshold 없으면 empty → Controller에서 404 처리
         return thresholdConfigRepository.findByAppName(appName)
                 .map(threshold -> {
-                    // 의도: AVG 결과 null 방어 - 데이터 없으면 0.0
                     double avgCpu = Optional.ofNullable(
                                     metricsRepository.findAvgCpuUsage(appName, startTime, endTime))
                             .orElse(0.0);
@@ -66,11 +72,9 @@ public class MetricsAdapter implements MetricsPort {
                     double cpuThreshold = Optional.ofNullable(threshold.getCpuThreshold()).orElse(80.0);
                     double memoryThreshold = Optional.ofNullable(threshold.getMemoryThreshold()).orElse(80.0);
 
-                    // 의도: 임계값 대비 현재 수준 (%) - 위젯에서 "얼마나 위험한가" 표시용
                     double cpuUsagePercent = cpuThreshold > 0 ? avgCpu / cpuThreshold * 100 : 0.0;
                     double heapUsagePercent = memoryThreshold > 0 ? avgHeap / memoryThreshold * 100 : 0.0;
 
-                    // 의도: slope 없으면 0.0 기본값 → 아직 Erosion 판단 전이면 추세 없음으로 표시
                     double resourceSlope = erosionTrendSlopeRepository.findLatestByAppName(appName)
                             .map(e -> e.getResourceSlope()).orElse(0.0);
                     double responseSlope = erosionTrendSlopeRepository.findLatestByAppName(appName)

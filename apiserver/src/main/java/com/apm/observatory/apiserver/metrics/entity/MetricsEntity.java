@@ -2,8 +2,10 @@ package com.apm.observatory.apiserver.metrics.entity;
 
 import jakarta.persistence.*;
 
-// 의도: metrics 테이블 읽기 전용 매핑
-// collectorserver가 JdbcTemplate으로 저장, apiserver는 JPA로 조회만
+/**
+ * metrics 테이블 읽기 전용 매핑. collectorserver가 JdbcTemplate으로 저장하고 apiserver는
+ * JPA로 조회만 한다.
+ */
 @Entity
 @Table(name = "metrics")
 public class MetricsEntity {

@@ -4,7 +4,7 @@ import java.time.LocalTime;
 
 public class ConfigModel {
 
-    // POST /config/threshold 요청
+    /** POST /config/threshold 요청. */
     public record ThresholdRequest(
             String appName,
             Double cpuThreshold,
@@ -15,7 +15,7 @@ public class ConfigModel {
             Double slopeMinPositive
     ) {}
 
-    // POST /config/threshold 응답
+    /** POST /config/threshold 응답. */
     public record ThresholdResponse(
             String appName,
             double cpuThreshold,
@@ -26,9 +26,10 @@ public class ConfigModel {
             double slopeMinPositive
     ) {}
 
-    // POST /config/business-cycle 요청
-    // 의도: appName 필수, 나머지 null이면 기존값 유지 (upsert)
-    // 시간 형식: HH:mm (예: "09:00", "18:00")
+    /**
+     * POST /config/business-cycle 요청. appName은 필수이고 나머지는 null이면 기존값을 유지한다
+     * (upsert). 시간은 HH:mm 형식이다(예: "09:00", "18:00").
+     */
     public record BusinessCycleRequest(
             String appName,
             LocalTime cycleStart,
@@ -37,7 +38,7 @@ public class ConfigModel {
             LocalTime peakEnd
     ) {}
 
-    // POST /config/business-cycle 응답
+    /** POST /config/business-cycle 응답. */
     public record BusinessCycleResponse(
             String appName,
             LocalTime cycleStart,

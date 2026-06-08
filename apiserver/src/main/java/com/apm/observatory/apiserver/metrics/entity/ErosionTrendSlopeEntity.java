@@ -7,8 +7,10 @@ import jakarta.persistence.Table;
 
 import java.time.Instant;
 
-// 의도: erosion_trend_slopes 테이블 읽기 전용 매핑
-// summarizePerformance()에서 최근 slope 조회용
+/**
+ * erosion_trend_slopes 테이블 읽기 전용 매핑. summarizePerformance()에서 최근 slope를
+ * 조회한다.
+ */
 @Entity
 @Table(name = "erosion_trend_slopes")
 public class ErosionTrendSlopeEntity {

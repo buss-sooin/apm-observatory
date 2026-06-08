@@ -5,6 +5,10 @@ import lombok.*;
 
 import java.time.Instant;
 
+/**
+ * ai_analysis_results 테이블 읽기 전용 매핑. aipipeline이 저장하고 apiserver는 조회만 한다.
+ * fusion_criteria·pattern_type은 int로 저장돼 Adapter에서 AnalysisType으로 변환된다.
+ */
 @Entity
 @Table(name = "ai_analysis_results")
 @Getter

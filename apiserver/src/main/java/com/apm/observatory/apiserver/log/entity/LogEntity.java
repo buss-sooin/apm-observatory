@@ -9,6 +9,9 @@ import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 
+/**
+ * logs 테이블 읽기 전용 매핑. collectorserver가 저장하고 apiserver는 조회만 한다.
+ */
 @Entity
 @Table(name = "logs")
 @Getter
@@ -36,6 +39,7 @@ public class LogEntity {
     @Column(name = "error")
     private boolean error;
 
+    /** logs 테이블의 복합 PK(timestamp + app_name + thread_name). */
     @Embeddable
     @Getter
     public static class LogPk implements Serializable {

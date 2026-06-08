@@ -12,28 +12,25 @@ import java.util.Optional;
 
 public interface MetricsRepository extends JpaRepository<MetricsEntity, MetricsPk> {
 
-    // 의도: 최신 1건 조회 → snapshotCurrent() 용
-    // ORDER BY timestamp DESC LIMIT 1
+    /** 최신 1건 조회(snapshotCurrent용). timestamp 내림차순 1건. */
     @Query("SELECT m FROM MetricsEntity m WHERE m.id.appName = :appName ORDER BY m.id.timestamp DESC LIMIT 1")
     Optional<MetricsEntity> findLatestByAppName(@Param("appName") String appName);
 
-    // 의도: 시간 범위 내 시계열 조회 → traceTrend() 용
+    /** 시간 범위 내 시계열 조회(traceTrend용). timestamp 오름차순. */
     @Query("SELECT m FROM MetricsEntity m WHERE m.id.appName = :appName AND m.id.timestamp BETWEEN :start AND :end ORDER BY m.id.timestamp ASC")
     List<MetricsEntity> findByAppNameAndTimestampBetween(
             @Param("appName") String appName,
             @Param("start") Instant start,
             @Param("end") Instant end);
 
-    // 의도: 구간 CPU 평균 → summarizePerformance() 용
-    // 결과 없으면 null → Adapter에서 null 방어 처리
+    /** 구간 CPU 평균(summarizePerformance용). 결과 없으면 null이므로 Adapter에서 방어한다. */
     @Query("SELECT AVG(m.cpuUsage) FROM MetricsEntity m WHERE m.id.appName = :appName AND m.id.timestamp BETWEEN :start AND :end")
     Double findAvgCpuUsage(
             @Param("appName") String appName,
             @Param("start") Instant start,
             @Param("end") Instant end);
 
-    // 의도: 구간 heap 사용률(%) 평균 → summarizePerformance() 용
-    // JPQL에서 heap_used / heap_max * 100 계산
+    /** 구간 heap 사용률(%) 평균(summarizePerformance용). JPQL에서 heap_used / heap_max * 100을 계산한다. */
     @Query("SELECT AVG(m.heapUsed * 1.0 / m.heapMax * 100) FROM MetricsEntity m WHERE m.id.appName = :appName AND m.id.timestamp BETWEEN :start AND :end")
     Double findAvgHeapUsagePercent(
             @Param("appName") String appName,

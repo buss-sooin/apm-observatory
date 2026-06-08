@@ -10,6 +10,9 @@ import lombok.Getter;
 
 import java.time.Instant;
 
+/**
+ * spans 테이블 읽기 전용 매핑. collectorserver가 저장하고 apiserver는 조회만 한다.
+ */
 @Entity
 @Table(name = "spans")
 @Getter

@@ -19,6 +19,10 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
+/**
+ * Spring Security 설정. JWT 기반이라 세션 없이 STATELESS로 두고, JwtAuthenticationFilter를
+ * 기본 인증 필터 앞에 삽입한다.
+ */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
@@ -29,49 +33,39 @@ public class SecurityConfig {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
     }
 
+    /**
+     * 보안 필터 체인을 구성한다. 쿠키 인증이 없어 CSRF를 끄고, 세션을 STATELESS로 둔다.
+     * JwtAuthenticationFilter를 UsernamePasswordAuthenticationFilter 앞에 둬서 JWT 검증이
+     * 기본 인증보다 먼저 실행되게 한다.
+     */
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // 의도: JWT 기반 API 서버 → 쿠키 인증 없음 → CSRF 불필요
                 .csrf(AbstractHttpConfigurer::disable)
-
-                // 의도: JWT 기반 → 서버 세션 불필요 → STATELESS
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
                 .authorizeHttpRequests(auth -> auth
-                        // healthcheck는 인증 없이 허용
                         .requestMatchers(HttpMethod.GET, "/health").permitAll()
-                        // Swagger UI 접근 허용
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**"
                         ).permitAll()
-                        // 로그인은 인증 없이 허용
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
-                        // 회원가입은 ADMIN만
                         .requestMatchers(HttpMethod.POST, "/auth/register").hasRole("ADMIN")
-                        // 설정 변경은 ADMIN만
                         .requestMatchers(HttpMethod.POST, "/config/**").hasRole("ADMIN")
-                        // 나머지 모든 요청은 인증 필요
                         .anyRequest().authenticated()
                 )
-
-                // 의도: JwtAuthenticationFilter를 UsernamePasswordAuthenticationFilter 앞에 삽입
-                // → 매 요청에서 JWT 검증이 Spring Security 기본 인증보다 먼저 실행
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
+    /** CORS 설정. 개발 편의로 모든 origin을 허용하고 자격 증명 전송을 켠다. */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        // 의도: 시놀로지 서버 도메인 추후 변경 가능하도록 명시적 설정
-        // 로컬 개발 편의를 위해 localhost 포함
         config.setAllowedOriginPatterns(List.of("*"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
@@ -87,7 +81,7 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    // 의도: AuthService에서 로그인 시 인증 처리에 사용
+    /** AuthService가 로그인 인증에 쓰는 AuthenticationManager. */
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();

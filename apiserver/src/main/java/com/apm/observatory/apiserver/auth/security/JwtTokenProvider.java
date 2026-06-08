@@ -11,14 +11,16 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/**
+ * JWT 발급·검증을 담당한다. secret 문자열은 빈 생성 시점에 SecretKey로 한 번만 변환해 필드로
+ * 보관하고 매 요청 재사용한다. role을 커스텀 클레임으로 실어 파싱 시 DB 조회 없이 권한을 얻는다.
+ */
 @Component
 public class JwtTokenProvider {
 
     private final SecretKey key;
     private final long expiration;
 
-    // 의도: 빈 생성 시점에 secret 문자열을 SecretKey 객체로 변환해서 보관
-    // 매 요청마다 변환하지 않고 한 번만 변환해서 재사용
     public JwtTokenProvider(
             @Value("${jwt.secret}") String secret,
             @Value("${jwt.expiration}") long expiration
@@ -27,8 +29,7 @@ public class JwtTokenProvider {
         this.expiration = expiration;
     }
 
-    // 의도: username + role → JWT 문자열 생성
-    // role은 커스텀 클레임으로 저장 → 파싱 시 DB 조회 없이 role 추출 가능
+    /** username과 role로 JWT를 만든다. role은 커스텀 클레임이라 파싱 시 DB 조회 없이 추출된다. */
     public String generate(String username, String role) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + expiration);
@@ -42,8 +43,10 @@ public class JwtTokenProvider {
                 .compact();
     }
 
-    // 의도: 토큰 파싱 + 서명 검증
-    // 만료/위변조 시 JwtException 계열 예외 발생 → 호출자(Filter)가 catch해서 401 처리
+    /**
+     * 토큰을 파싱하고 서명을 검증한다. 만료·위변조면 JwtException 계열이 올라가므로
+     * 호출자(Filter)가 잡아 401로 처리한다.
+     */
     public Claims parse(String token) {
         return Jwts.parser()
                 .verifyWith(key)
@@ -52,8 +55,7 @@ public class JwtTokenProvider {
                 .getPayload();
     }
 
-    // 의도: 필터에서 토큰 유효성을 boolean으로 빠르게 확인하는 진입점
-    // parse() 성공 = 서명 유효 + 만료 안됨 → true
+    /** 토큰 유효성을 boolean으로 빠르게 확인한다. parse() 성공이면 서명 유효·미만료다. */
     public boolean isValid(String token) {
         try {
             parse(token);

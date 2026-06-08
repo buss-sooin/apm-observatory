@@ -4,7 +4,7 @@ import java.time.Instant;
 
 public class LogModel {
 
-    // GET /logs/stream 응답 원소
+    /** GET /logs/stream 응답 원소. */
     public record LogEntry(
             Instant timestamp,
             String appName,

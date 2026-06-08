@@ -15,6 +15,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
+/**
+ * 인증 위임과 계정 생성을 담당한다. 접근 제어(누가 어떤 API를 부를 수 있는가)는
+ * SecurityConfig가 맡고, 여기서는 인증과 저장 책임만 진다.
+ */
 @Service
 public class AuthService {
 
@@ -33,9 +37,11 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    // 의도: AuthenticationManager에게 인증을 위임
-    // 내부적으로 CustomUserDetailsService.loadUserByUsername() 호출 → BCrypt 비교
-    // 실패 시 AuthenticationException 발생 → Spring Security가 401 처리
+    /**
+     * 인증을 AuthenticationManager에 위임한다. 내부적으로
+     * CustomUserDetailsService.loadUserByUsername()을 호출해 BCrypt로 비교하고, 실패하면
+     * AuthenticationException이 올라가 Spring Security가 401로 응답한다.
+     */
     public LoginResponse login(LoginRequest request) {
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.username(), request.password())
@@ -50,9 +56,10 @@ public class AuthService {
         return new LoginResponse(token);
     }
 
-    // 의도: ADMIN이 VIEWER 계정 생성
-    // 접근 제어는 SecurityConfig에서 담당 → 여기선 저장 책임만
-    // 신규 계정은 항상 ROLE_VIEWER로 고정 (ADMIN 계정은 init.sql에서만 생성)
+    /**
+     * 계정을 생성한다. 신규 계정은 항상 ROLE_VIEWER로 고정하며, ADMIN 계정은 init.sql에서만
+     * 만든다. 이 API를 ADMIN만 호출할 수 있게 막는 것은 SecurityConfig의 몫이다.
+     */
     public void register(RegisterRequest request) {
         if (userRepository.existsByUsername(request.username())) {
             throw new IllegalArgumentException("이미 존재하는 사용자명입니다: " + request.username());
@@ -62,7 +69,7 @@ public class AuthService {
                 UUID.randomUUID().toString(),
                 request.username(),
                 passwordEncoder.encode(request.password()),
-                "ROLE_VIEWER"  // 의도: register API로는 VIEWER만 생성 가능
+                "ROLE_VIEWER"
         );
 
         userRepository.save(user);

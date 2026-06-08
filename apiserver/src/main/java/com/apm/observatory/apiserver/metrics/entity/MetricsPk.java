@@ -7,8 +7,10 @@ import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 
-// 의도: metrics 테이블의 복합 PK (timestamp + app_name)
-// TimescaleDB hypertable 기준 - collectorserver와 동일한 PK 구조
+/**
+ * metrics 테이블의 복합 PK(timestamp + app_name). TimescaleDB hypertable 기준으로
+ * collectorserver와 같은 PK 구조다.
+ */
 @Embeddable
 public class MetricsPk implements Serializable {
 

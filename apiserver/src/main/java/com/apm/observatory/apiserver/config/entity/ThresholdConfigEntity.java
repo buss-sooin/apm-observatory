@@ -46,7 +46,7 @@ public class ThresholdConfigEntity {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
-    // 의도: 신규 생성용 생성자
+    /** 신규 생성용 생성자. createdAt·updatedAt을 현재 시각으로 찍는다. */
     public ThresholdConfigEntity(String id, String appName,
                                  double cpuThreshold, double memoryThreshold,
                                  long diskIoThreshold, double spanDurationMultiplier,
@@ -63,8 +63,10 @@ public class ThresholdConfigEntity {
         this.updatedAt = Instant.now();
     }
 
-    // 의도: 수정용 생성자 - 기존 id, appName, createdAt 유지
-    // null이면 기존값 유지 (방법 A: Adapter에서 명시적 null 방어)
+    /**
+     * 수정본을 만든다. id·appName·createdAt은 유지하고 updatedAt만 새로 찍는다.
+     * 전달값이 null인 필드는 기존값을 그대로 유지한다.
+     */
     public ThresholdConfigEntity updateWith(Double cpuThreshold, Double memoryThreshold,
                                             Long diskIoThreshold, Double spanDurationMultiplier,
                                             Double externalRatioMultiplier, Double slopeMinPositive) {

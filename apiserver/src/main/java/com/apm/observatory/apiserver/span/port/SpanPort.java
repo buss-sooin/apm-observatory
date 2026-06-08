@@ -6,8 +6,10 @@ import java.util.Optional;
 
 public interface SpanPort {
 
-    // 의도: traceId 하나로 전체 Span을 트리 구조로 조립해서 반환
-    // flat rows → root 찾기 → BFS 트리 순회 → offsetMs, depth 계산
+    /**
+     * traceId 하나로 전체 Span을 트리 구조로 조립해 반환한다.
+     * 조립 방식은 구현(SpanAdapter)에 둔다.
+     */
     Optional<WaterfallResponse> buildWaterfall(String traceId);
 
 }

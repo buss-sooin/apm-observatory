@@ -39,6 +39,10 @@ public class BusinessCycleEntity {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
+    /**
+     * 수정본을 만든다. id·appName·createdAt은 유지하고 updatedAt만 새로 찍는다.
+     * 전달값이 null인 필드는 기존값을 그대로 유지한다.
+     */
     public BusinessCycleEntity updateWith(
             LocalTime cycleStart, LocalTime cycleEnd,
             LocalTime peakStart, LocalTime peakEnd) {

@@ -5,7 +5,7 @@ import java.util.List;
 
 public class SpanModel {
 
-    // GET /spans/waterfall 응답
+    /** GET /spans/waterfall 응답. */
     public record WaterfallResponse(
             String traceId,
             String rootStatus,      // MEASURED: 측정된 ROOT 존재 / MISSING: ROOT 없어 조립용 가짜 root로 묶음
@@ -14,8 +14,10 @@ public class SpanModel {
             List<WaterfallSpan> spans
     ) {}
 
-    // 폭포수 차트 개별 Span
-    // 의도: DB flat rows → 트리 구조 표현에 필요한 파생값 포함
+    /**
+     * 폭포수 차트의 개별 Span. DB의 flat row를 트리 구조로 표현하는 데 필요한
+     * 파생값(startOffsetMs, depth)을 포함한다.
+     */
     public record WaterfallSpan(
             String spanId,
             String parentSpanId,

@@ -7,8 +7,10 @@ import java.util.List;
 
 public interface SpanRepository extends JpaRepository<SpanEntity, String> {
 
-    // 의도: traceId로 전체 Span 조회 → waterfall 트리 조립용
-    // start_time 오름차순 → root부터 자식 순서로 정렬
+    /**
+     * traceId로 전체 Span을 start_time 오름차순으로 조회한다. waterfall 트리 조립의
+     * 입력이며, 오름차순이라 root가 자식보다 앞선다.
+     */
     List<SpanEntity> findByTraceIdOrderByStartTimeAsc(String traceId);
 
 }
