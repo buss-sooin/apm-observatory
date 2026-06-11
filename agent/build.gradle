@@ -13,6 +13,11 @@ dependencies {
     implementation project(':common')
 
     compileOnly 'ch.qos.logback:logback-classic:1.4.14'
+
+    // 측정2(test 전용)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testImplementation 'io.grpc:grpc-inprocess:1.60.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.10.2'
 }
 
 shadowJar {
@@ -25,5 +30,24 @@ shadowJar {
                 'Can-Redefine-Classes': 'true',
                 'Can-Retransform-Classes': 'true'
         )
+    }
+    test {
+        useJUnitPlatform {
+            excludeTags 'benchmark'
+        }
+        testLogging {
+            events 'passed', 'skipped', 'failed'
+        }
+    }
+    tasks.register('benchmark', Test) {
+        description = '측정2 전송 효율 벤치마크(수동 실행)'
+        useJUnitPlatform {
+            includeTags 'benchmark'
+        }
+        testLogging {
+            events 'passed', 'failed'
+            showStandardStreams = true
+        }
+        outputs.upToDateWhen { false }
     }
 }
