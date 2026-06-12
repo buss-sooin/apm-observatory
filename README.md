@@ -449,16 +449,23 @@ flowchart TB
 
 외부 요청을 받는 게이트웨이 특성상 요청에 대한 인증이 필요했습니다. 인증 구현은 gRPC 공식 가이드의 인터셉터 방식을 참조했습니다. ([Java Example](https://github.com/grpc/grpc-java/tree/master/examples/src/main/java/io/grpc/examples/header)) 인증 실패 시 `UNAUTHENTICATED`로 즉시 거부하고 `MonitoringServiceImpl`까지 요청이 전달되지 않습니다.
 
-```
-에이전트 요청
-    ↓
-ApiKeyAuthInterceptor
-    ├─ API Key 없음 또는 불일치
-    │       → UNAUTHENTICATED 즉시 반환
-    │
-    └─ 인증 성공
-            ↓
-        MonitoringServiceImpl → RedisStreamPublisher
+```mermaid
+flowchart TD
+    REQ["에이전트 요청"]
+    INTERCEPTOR["ApiKeyAuthInterceptor"]
+    AUTH{"API Key 일치?"}
+    REJECT[/"UNAUTHENTICATED 즉시 반환"/]
+    SVC["MonitoringServiceImpl"]
+    PUB(["RedisStreamPublisher"])
+
+    REQ --> INTERCEPTOR
+    INTERCEPTOR --> AUTH
+    AUTH -->|없음 또는 불일치| REJECT
+    AUTH -->|인증 성공| SVC
+    SVC --> PUB
+
+    style INTERCEPTOR fill:#e1f5ee
+    style REJECT fill:#fdecea
 ```
 
 - [`gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/interceptor/ApiKeyAuthInterceptor.java)
