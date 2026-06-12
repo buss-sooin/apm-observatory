@@ -200,6 +200,35 @@ flowchart LR
 
     HJ ~~~ GP
 
+    classDef httpHead fill:none,stroke:#5b6b7b,stroke-width:2px,color:#1a2530,font-weight:bold
+    classDef grpcHead fill:none,stroke:#1d4e89,stroke-width:2px,color:#0c2d4e,font-weight:bold
+    classDef httpNode fill:#e8ecf0,stroke:#5b6b7b,color:#1a2530
+    classDef grpcNode fill:#dce8f5,stroke:#1d4e89,color:#0c2d4e
+
+    class HJ httpHead
+    class GP grpcHead
+    class HJ1,HJ2,HJ3,HJ4 httpNode
+    class GP1,GP2,GP3,GP4 grpcNode
+    subgraph HJ["HTTP JSON"]
+        direction TB
+        HJ1["요청마다<br/>TCP 연결 수립"]
+        HJ2["{&quot;cpu&quot;:0.45,<br/>&quot;heap&quot;:1024,...}"]
+        HJ3["텍스트 직렬화<br/>→ 파싱 비용"]
+        HJ4["HTTP 헤더<br/>오버헤드"]
+        HJ1 ~~~ HJ2 ~~~ HJ3 ~~~ HJ4
+    end
+
+    subgraph GP["gRPC + Protobuf"]
+        direction TB
+        GP1["HTTP/2 단일 연결 위에서<br/>다중 스트림"]
+        GP2["binary:<br/>0x08 0x3d 0x10 0x80..."]
+        GP3["바이너리 직렬화<br/>→ 파싱 비용 낮음"]
+        GP4["헤더 압축<br/>(HPACK)"]
+        GP1 ~~~ GP2 ~~~ GP3 ~~~ GP4
+    end
+
+    HJ ~~~ GP
+
     classDef httpHead fill:#5b6b7b,stroke:#2d3742,color:#ffffff,font-weight:bold
     classDef grpcHead fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
     classDef httpNode fill:#e8ecf0,stroke:#5b6b7b,color:#1a2530
