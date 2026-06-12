@@ -209,35 +209,6 @@ flowchart LR
     class GP grpcHead
     class HJ1,HJ2,HJ3,HJ4 httpNode
     class GP1,GP2,GP3,GP4 grpcNode
-    subgraph HJ["HTTP JSON"]
-        direction TB
-        HJ1["요청마다<br/>TCP 연결 수립"]
-        HJ2["{&quot;cpu&quot;:0.45,<br/>&quot;heap&quot;:1024,...}"]
-        HJ3["텍스트 직렬화<br/>→ 파싱 비용"]
-        HJ4["HTTP 헤더<br/>오버헤드"]
-        HJ1 ~~~ HJ2 ~~~ HJ3 ~~~ HJ4
-    end
-
-    subgraph GP["gRPC + Protobuf"]
-        direction TB
-        GP1["HTTP/2 단일 연결 위에서<br/>다중 스트림"]
-        GP2["binary:<br/>0x08 0x3d 0x10 0x80..."]
-        GP3["바이너리 직렬화<br/>→ 파싱 비용 낮음"]
-        GP4["헤더 압축<br/>(HPACK)"]
-        GP1 ~~~ GP2 ~~~ GP3 ~~~ GP4
-    end
-
-    HJ ~~~ GP
-
-    classDef httpHead fill:#5b6b7b,stroke:#2d3742,color:#ffffff,font-weight:bold
-    classDef grpcHead fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
-    classDef httpNode fill:#e8ecf0,stroke:#5b6b7b,color:#1a2530
-    classDef grpcNode fill:#dce8f5,stroke:#1d4e89,color:#0c2d4e
-
-    class HJ httpHead
-    class GP grpcHead
-    class HJ1,HJ2,HJ3,HJ4 httpNode
-    class GP1,GP2,GP3,GP4 grpcNode
 ```
 
 JSON 텍스트 직렬화 비용, HTTP 헤더 오버헤드, 요청마다 연결을 맺는 비용이 누적됩니다. gRPC + Protobuf는 바이너리 직렬화로 페이로드 크기가 작고 HTTP/2 기반으로 하나의 연결에서 다중 스트림을 처리합니다. 또한 gRPC는 OpenTelemetry의 표준 전송 프로토콜인 [OTLP](https://opentelemetry.io/docs/specs/otlp/)가 채택한 방식이기도 합니다.
