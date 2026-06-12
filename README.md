@@ -24,11 +24,11 @@ APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 �
 
 JVM 내부 동작, 바이트코드 조작(Java Instrumentation), OpenTelemetry 사양 등 직접 다뤄본 적 없는 영역의 학습이 선행되어야 했습니다. 학습 없이는 무엇을 만들지조차 결정할 수 없었기 때문에 질의응답으로 이해를 먼저 쌓고, 그 위에서 설계를 의논하고 코드를 작성하는 순서로 진행했습니다. 학습량과 질문이 많아질수록 채팅 한 번에 담을 수 있는 한계를 넘어섰고, 채팅 간에 맥락을 잃지 않고 이어가는 것이 중요했습니다.
 
-| 항목 | 내용 |
-|---|---|
-| 모델 | Claude Sonnet 4.6, Claude Opus 4.7 |
-| 사용 환경 | 클로드 프로젝트 + 채팅 UI (claude.ai) |
-| 컨텍스트 관리 방식 | 프로젝트 지침 + 프로젝트 파일 + 세션 간 인계 노트(section) |
+| 항목 | 내용                                                  |
+|---|-----------------------------------------------------|
+| 모델 | Claude Sonnet 4.6, Claude Opus 4.7, Claude Opus 4.8 |
+| 사용 환경 | 클로드 프로젝트 + 채팅 UI (claude.ai)                        |
+| 컨텍스트 관리 방식 | 프로젝트 지침 + 프로젝트 파일 + 세션 간 인계 노트(section)             |
 
 이 컨텍스트 관리 방식은 Anthropic이 정의한 [**컨텍스트 엔지니어링(Context Engineering)**](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)을 그대로 구현해놓은 클로드 프로젝트 환경에 맞춰 구성한 것입니다. 위 링크에서 컨텍스트 엔지니어링이 관리하는 세 영역 — *system instructions, external data, message history* — 이 표의 세 항목과 일치합니다.
 
@@ -36,7 +36,7 @@ JVM 내부 동작, 바이트코드 조작(Java Instrumentation), OpenTelemetry �
 - **프로젝트 파일** — 채용 공고, 진단 커맨드셋 등 매 채팅에서 반복 참조되는 자료를 등록.
 - **세션 간 인계 노트(section)** — 채팅 종료 시점에 결정 사항·이월 항목·다음 작업을 정리해 파일로 저장하고, 다음 채팅 시작 시 다시 등록.
 
-코드는 모두 AI가 작성했고, 핵심 설계와 흐름은 직접 결정했습니다.
+핵심 아키텍처 설계와 흐름, 코드 패턴과 개선들은 제가 직접 결정하고 검토했습니다. 오로지 코딩만 AI 가 전담했습니다.
 
 이 프로젝트는 위와 같이 클로드가 제공하는 환경에서 작업했으며, 통상 하네스(agent harness)라 불리는 에이전트가 동작하는 환경(agent loop, tool interface, execution sandbox 등)은 다루지 않았습니다.
 
@@ -178,12 +178,37 @@ Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다
 
 에이전트의 역할은 크게 두 가지입니다. 관측 데이터를 수집하는 것과 수집한 데이터를 엔드포인트로 전송하는 것입니다. 수집은 Byte Buddy Advice가 담당하고, 전송 측의 효율적인 설계를 고민해야 했습니다. 가장 단순한 방법은 HTTP JSON 전송입니다. 구현이 쉽고 디버깅이 편하지만 APM 에이전트처럼 짧고 빈번한 데이터를 대량으로 전송하는 환경에서는 맞지 않다고 판단했습니다.
 
-```
-[HTTP JSON]                          [gRPC + Protobuf]
-요청마다 TCP 연결 수립                 HTTP/2 단일 연결 위에서 다중 스트림
-{"cpu":0.45,"heap":1024,...}         binary: 0x08 0x3d 0x10 0x80...
-텍스트 직렬화 → 파싱 비용              바이너리 직렬화 → 파싱 비용 낮음
-HTTP 헤더 오버헤드                    헤더 압축 (HPACK)
+```mermaid
+flowchart LR
+    subgraph HJ["HTTP JSON"]
+        direction TB
+        HJ1["요청마다<br/>TCP 연결 수립"]
+        HJ2["{&quot;cpu&quot;:0.45,<br/>&quot;heap&quot;:1024,...}"]
+        HJ3["텍스트 직렬화<br/>→ 파싱 비용"]
+        HJ4["HTTP 헤더<br/>오버헤드"]
+        HJ1 ~~~ HJ2 ~~~ HJ3 ~~~ HJ4
+    end
+
+    subgraph GP["gRPC + Protobuf"]
+        direction TB
+        GP1["HTTP/2 단일 연결 위에서<br/>다중 스트림"]
+        GP2["binary:<br/>0x08 0x3d 0x10 0x80..."]
+        GP3["바이너리 직렬화<br/>→ 파싱 비용 낮음"]
+        GP4["헤더 압축<br/>(HPACK)"]
+        GP1 ~~~ GP2 ~~~ GP3 ~~~ GP4
+    end
+
+    HJ ~~~ GP
+
+    classDef httpHead fill:#5b6b7b,stroke:#2d3742,color:#ffffff,font-weight:bold
+    classDef grpcHead fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
+    classDef httpNode fill:#e8ecf0,stroke:#5b6b7b,color:#1a2530
+    classDef grpcNode fill:#dce8f5,stroke:#1d4e89,color:#0c2d4e
+
+    class HJ httpHead
+    class GP grpcHead
+    class HJ1,HJ2,HJ3,HJ4 httpNode
+    class GP1,GP2,GP3,GP4 grpcNode
 ```
 
 JSON 텍스트 직렬화 비용, HTTP 헤더 오버헤드, 요청마다 연결을 맺는 비용이 누적됩니다. gRPC + Protobuf는 바이너리 직렬화로 페이로드 크기가 작고 HTTP/2 기반으로 하나의 연결에서 다중 스트림을 처리합니다. 또한 gRPC는 OpenTelemetry의 표준 전송 프로토콜인 [OTLP](https://opentelemetry.io/docs/specs/otlp/)가 채택한 방식이기도 합니다.
@@ -192,31 +217,83 @@ JSON 텍스트 직렬화 비용, HTTP 헤더 오버헤드, 요청마다 연결�
 
 Go의 고루틴은 이 구조가 다릅니다. Go 런타임은 G(고루틴), M(OS 스레드), P(논리 프로세서) 세 가지로 구성됩니다. Go 코드는 G 위에서 실행되고, G는 P의 실행 큐에 들어가고, P는 실제 OS 스레드인 M에 붙어서 실행됩니다. OS 스레드를 사용하는 건 동일하지만 Go 런타임 스케줄러가 그 위에서 고루틴을 직접 스케줄링합니다. 고루틴이 블로킹 상태가 되면 P가 M에서 분리되고 다른 M에 붙어서 다른 고루틴을 계속 실행합니다. OS 스레드가 1~2MB를 소비하는 것과 달리 고루틴은 약 2KB에서 시작합니다. ([Go 공식 FAQ](https://go.dev/doc/faq#goroutines))
 
-```
-[Java 플랫폼 스레드]
-OS Thread-1 ── Request-1 (블로킹 중)
-OS Thread-2 ── Request-2 (블로킹 중)
-OS Thread-3 ── Request-3 (블로킹 중)
-...
-OS Thread-200 ── Request-200
-                 Request-201 ← 대기
-블로킹 중인 스레드는 다른 요청을 처리할 수 없음
-스레드당 스택 메모리 ~1MB / 최대 200개 한도
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
+flowchart LR
+    subgraph JAVA["Java 플랫폼 스레드"]
+        direction TB
+        subgraph JCELL[" "]
+            direction TB
+            JT1["Request-1 → OS Thread-1<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
+            JT2["Request-2 → OS Thread-2<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
+            JT3["Request-3 → OS Thread-3<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
+            JTD["⋮"]
+            JT200["Request-200 → OS Thread-200<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
+            JT201["Request-201<br/>대기 · 빈 스레드 없음"]
+            JT1 ~~~ JT2 ~~~ JT3 ~~~ JTD ~~~ JT200 ~~~ JT201
+        end
+        JDESC["블로킹 중인 스레드는 다른 요청을 처리할 수 없음<br/>스레드당 스택 메모리 ~1MB / 최대 200개 한도"]
+        JCELL ~~~ JDESC
+    end
 
-[Go 고루틴 G/M/P]
-┌──────────────────────────────────┐
-│           Go Runtime             │
-│  ┌────────────┐ ┌────────────┐   │
-│  │     P-1    │ │     P-2    │   │
-│  │  G1 G2 G3  │ │  G4 G5 G6  │   │
-│  │     M-1    │ │     M-2    │   │
-│  └────────────┘ └────────────┘   │
-└──────────────────────────────────┘
-       │                 │
-  OS Thread-1       OS Thread-2
-G1 블로킹 시 → P-1이 즉시 G2 실행
-OS Thread-1는 블로킹되지 않음
-고루틴당 초기 스택 ~2KB / 수십만 동시 실행 가능
+    subgraph GO["Go 고루틴 G/M/P"]
+        direction TB
+        REQG["Request → 고루틴 G로 유입"]
+        subgraph RUNTIME["Go Runtime"]
+            direction LR
+            subgraph P1["P-1"]
+                direction TB
+                P1G1["G1 · I/O 블로킹"]
+                P1G2["G2 · 실행"]
+                P1M["M-1 (OS Thread)<br/>계속 실행"]
+                P1G1 -. "P가 즉시 G2로 전환" .-> P1G2
+                P1G2 --> P1M
+            end
+            subgraph P2["P-2"]
+                direction TB
+                P2G1["G4 · I/O 블로킹"]
+                P2G2["G5 · 실행"]
+                P2M["M-2 (OS Thread)<br/>계속 실행"]
+                P2G1 -. "P가 즉시 G5로 전환" .-> P2G2
+                P2G2 --> P2M
+            end
+            P1 ~~~ P2
+        end
+        GODESC["G1 블로킹 시 → P-1이 즉시 G2 실행<br/>OS Thread는 블로킹되지 않음<br/>고루틴당 초기 스택 ~2KB / 수십만 동시 실행 가능"]
+        REQG --> RUNTIME
+        RUNTIME ~~~ GODESC
+        GOPAD["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]
+        GODESC ~~~ GOPAD
+    end
+
+    JAVA ~~~ GO
+
+    classDef javaHead fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
+    classDef javaCell fill:#eef1f4,stroke:#0c2d4e,color:#1a2530
+    classDef goHead fill:#0f6e56,stroke:#04342c,color:#ffffff,font-weight:bold
+    classDef runtimeBox fill:#d7ece4,stroke:#0f6e56,color:#04342c,font-weight:bold
+    classDef pBox fill:#eaf6f1,stroke:#0f6e56,color:#04342c,font-weight:bold
+    classDef descNode fill:none,stroke:none,color:#ffffff
+    classDef blockNode fill:#c0392b,stroke:#7b241c,color:#ffffff,font-weight:bold
+    classDef runNode fill:#27ae60,stroke:#196f3d,color:#ffffff,font-weight:bold
+    classDef waitNode fill:#cbd5e1,stroke:#64748b,color:#1a2530,font-weight:bold
+    classDef reqNode fill:#ffffff,stroke:#0f6e56,color:#04342c
+    classDef invis fill:none,stroke:none,color:#ffffff
+
+    class JAVA javaHead
+    class JCELL javaCell
+    class JT1,JT2,JT3,JT200 blockNode
+    class JTD javaCell
+    class JT201 waitNode
+    class JDESC descNode
+    class GO goHead
+    class RUNTIME runtimeBox
+    class P1,P2 pBox
+    class REQG reqNode
+    class P1G1,P2G1 blockNode
+    class P1G2,P2G2,P1M,P2M runNode
+    class GODESC descNode
+    class GOPAD invis
 ```
 
 대규모 전송 환경에서는 Go 고루틴 방식이 구조적으로 유리합니다. 다만 별도 Go 프로세스로 분리하면 프로세스 간 통신 구현이 추가되고, 단일 언어로 통일하는 것이 구현하기에 적합한 난이도라고 봐서 Java를 선택했습니다.
@@ -298,16 +375,76 @@ worker가 gRPC 전송을 통해 큐 데이터를 소비하는 속도를 측정 �
 
 게이트웨이를 중간에 두면 역할이 분리됩니다. 게이트웨이가 에이전트 커넥션을 전담하고 Redis Streams로 넘기면, 수집서버는 Redis에서 데이터를 꺼내 저장하는 역할에만 집중합니다. 수집서버는 에이전트 커넥션 부하로부터 격리됩니다.
 
-```
-[직접 연결]
-agent-1 ──┐
-agent-2 ──┤──→ collectorserver (커넥션 + Redis 발행 + DB 저장 전부 담당)
-agent-N ──┘    단일 장애 지점
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 500, "curve": "linear"}}}%%
+flowchart TB
+    subgraph DIRECT["직접 연결"]
+        direction LR
+        subgraph AG1[" "]
+            direction TB
+            A1(["agent-1"])
+            A2(["agent-2"])
+            AN(["agent-N"])
+        end
+        CS1[["collectorserver<br/>커넥션 + Redis 발행 + DB 저장 전부 담당<br/>단일 장애 지점"]]
+        DPAD["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]
+        A1 --> CS1
+        A2 --> CS1
+        AN --> CS1
+        CS1 ~~~ DPAD
+    end
 
-[게이트웨이 분리]
-agent-1 ──┐                       stream:metrics ──┐
-agent-2 ──┤──→ gateway ──────────→ stream:spans   ──┤──→ collectorserver ──→ DB
-agent-N ──┘    (커넥션 전담)       stream:logs    ──┘    (저장 전담)
+    subgraph SPLIT["게이트웨이 분리"]
+        direction LR
+        subgraph AG2[" "]
+            direction TB
+            B1(["agent-1"])
+            B2(["agent-2"])
+            BN(["agent-N"])
+        end
+        GW[["gateway<br/>커넥션 전담"]]
+        subgraph STREAMS[" "]
+            direction TB
+            SM[("stream:metrics")]
+            SS[("stream:spans")]
+            SL[("stream:logs")]
+        end
+        CS2[["collectorserver<br/>저장 전담"]]
+        DB[("&nbsp;<br/>&nbsp;&nbsp;&nbsp;DB&nbsp;&nbsp;&nbsp;<br/>&nbsp;")]
+        B1 --> GW
+        B2 --> GW
+        BN --> GW
+        GW --> SM
+        GW --> SS
+        GW --> SL
+        SM --> CS2
+        SS --> CS2
+        SL --> CS2
+        CS2 --> DB
+    end
+
+    DIRECT ~~~ SPLIT
+
+    classDef blockHead fill:none,stroke:#334155,stroke-width:2px,color:#1e293b,font-weight:bold
+    classDef groupBox fill:none,stroke:#94a3b8,stroke-dasharray:4 3,color:#1a2530
+    classDef agentNode fill:#5b6b7b,stroke:#2d3742,color:#ffffff,font-weight:bold
+    classDef serverGw fill:none,stroke:#0f6e56,stroke-width:2px,color:#0f6e56,font-weight:bold
+    classDef serverCol fill:none,stroke:#1d4e89,stroke-width:2px,color:#1d4e89,font-weight:bold
+    classDef serverDanger fill:none,stroke:#c0392b,stroke-width:2px,color:#c0392b,font-weight:bold
+    classDef streamNode fill:#fac775,stroke:#854f0b,color:#412402,font-weight:bold
+    classDef dbNode fill:#475569,stroke:#1e293b,color:#ffffff,font-weight:bold
+    classDef invisWide fill:none,stroke:none,color:#ffffff
+
+    class DIRECT blockHead
+    class SPLIT blockHead
+    class AG1,AG2,STREAMS groupBox
+    class A1,A2,AN,B1,B2,BN agentNode
+    class GW serverGw
+    class CS1 serverDanger
+    class CS2 serverCol
+    class SM,SS,SL streamNode
+    class DB dbNode
+    class DPAD invisWide
 ```
 
 외부 요청을 받는 게이트웨이 특성상 요청에 대한 인증이 필요했습니다. 인증 구현은 gRPC 공식 가이드의 인터셉터 방식을 참조했습니다. ([Java Example](https://github.com/grpc/grpc-java/tree/master/examples/src/main/java/io/grpc/examples/header)) 인증 실패 시 `UNAUTHENTICATED`로 즉시 거부하고 `MonitoringServiceImpl`까지 요청이 전달되지 않습니다.
@@ -335,16 +472,49 @@ ApiKeyAuthInterceptor
 
 게이트웨이는 언제든 늘어날 수 있는 외부 에이전트의 데이터를 빠르게 받는 것이 목적입니다. 반면 게이트웨이 이후 내부 구간에서는 에이전트 수가 동적으로 늘어나더라도 Redis Streams를 통해 수신 속도를 통제하고 확장할 수 있습니다. 또한 수집서버 장애나 재시작으로 인한 데이터 유실을 대비하고자 Consumer Group + ACK 구조로 재처리가 가능하고 AOF로 디스크에도 보존되는 Redis Streams를 택했습니다. 이 구조에서 바이너리를 유지해 전송 효율을 극대화하는 이득보다, 게이트웨이에서 파싱을 끝내 모듈 복잡성을 줄이고 수집서버가 저장 역할에만 집중하게 하는 쪽이 낫다고 판단했습니다.
 
-```
-[처음 — 바이너리 유지 + 단순 Redis]
-agent ──→ gateway ──→ Redis(바이너리) ──→ collectorserver(역직렬화)
-                                          common 모듈 의존 필요
-                                          gRPC 의존성 전파
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 520, "curve": "linear"}}}%%
+flowchart TB
+    subgraph FIRST["처음 — 바이너리 유지 + 단순 Redis"]
+        direction LR
+        FA(["agent"])
+        FG[["gateway"]]
+        FR[("Redis<br/>바이너리")]
+        FC[["collectorserver<br/>역직렬화"]]
+        FCOMMON["common 모듈<br/>Protobuf · gRPC"]
+        FA --> FG
+        FG --> FR --> FC
+        FG -. 의존 .-> FCOMMON -. 의존 .-> FC
+    end
 
-[최종 — 게이트웨이에서 파싱 + Redis Streams]
-agent ──→ gateway(역직렬화) ──→ Redis Streams(Map<String,String>) ──→ collectorserver
-                                Consumer Group + ACK                  m.get("cpu_usage")
-                                AOF 보존                              common 모듈 의존 없음
+    subgraph FINAL["최종 — 게이트웨이에서 파싱 + Redis Streams"]
+        direction LR
+        LA(["agent"])
+        LG[["gateway<br/>역직렬화"]]
+        LR2[("Redis Streams · Map&lt;String,String&gt;<br/>Consumer Group + ACK<br/>AOF 보존")]
+        LC[["collectorserver<br/>m.get(&quot;cpu_usage&quot;)"]]
+        LCOMMON["common 모듈<br/>Protobuf · gRPC"]
+        LA --> LG
+        LG --> LR2 --> LC
+        LG -. 의존 .-> LCOMMON
+    end
+
+    FIRST ~~~ FINAL
+
+    classDef blockHead fill:none,stroke:#334155,stroke-width:2px,color:#1e293b,font-weight:bold
+    classDef agentNode fill:#5b6b7b,stroke:#2d3742,color:#ffffff,font-weight:bold
+    classDef serverGw fill:none,stroke:#0f6e56,stroke-width:2px,color:#0f6e56,font-weight:bold
+    classDef serverCol fill:none,stroke:#1d4e89,stroke-width:2px,color:#1d4e89,font-weight:bold
+    classDef streamNode fill:#fac775,stroke:#854f0b,color:#412402,font-weight:bold
+    classDef commonNode fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#5b21b6,font-weight:bold
+
+    class FIRST blockHead
+    class FINAL blockHead
+    class FA,LA agentNode
+    class FG,LG serverGw
+    class FC,LC serverCol
+    class FR,LR2 streamNode
+    class FCOMMON,LCOMMON commonNode
 ```
 
 - [`gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java`](https://github.com/buss-sooin/apm-observatory/blob/main/gateway/src/main/java/com/apm/observatory/gateway/redis/RedisStreamPublisher.java)
