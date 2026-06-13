@@ -142,7 +142,7 @@ Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다
 
 ## 3. 전체 구조 한눈에 보기
 
-![아키텍처 다이어그램](https://github.com/user-attachments/assets/644328ec-e2c9-44af-8bd9-6ccbbd99401b)
+![아키텍처 다이어그램](docs/architecture.png)
 
 데이터는 타겟 앱에서 시작해서 에이전트, 게이트웨이, Redis, 수집서버를 거쳐 TimescaleDB에 쌓입니다. 이후 API 서버와 AI 파이프라인이 독립적으로 그 데이터를 소비합니다.
 
@@ -217,125 +217,13 @@ JSON 텍스트 직렬화 비용, HTTP 헤더 오버헤드, 요청마다 연결�
 
 Go의 고루틴은 이 구조가 다릅니다. Go 런타임은 G(고루틴), M(OS 스레드), P(논리 프로세서) 세 가지로 구성됩니다. Go 코드는 G 위에서 실행되고, G는 P의 실행 큐에 들어가고, P는 실제 OS 스레드인 M에 붙어서 실행됩니다. OS 스레드를 사용하는 건 동일하지만 Go 런타임 스케줄러가 그 위에서 고루틴을 직접 스케줄링합니다. 고루틴이 블로킹 상태가 되면 P가 M에서 분리되고 다른 M에 붙어서 다른 고루틴을 계속 실행합니다. OS 스레드가 1~2MB를 소비하는 것과 달리 고루틴은 약 2KB에서 시작합니다. ([Go 공식 FAQ](https://go.dev/doc/faq#goroutines))
 
-```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
-flowchart LR
-    subgraph JAVA["Java 플랫폼 스레드"]
-        direction TB
-        subgraph JCELL[" "]
-            direction TB
-            JT1["Request-1 → OS Thread-1<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
-            JT2["Request-2 → OS Thread-2<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
-            JT3["Request-3 → OS Thread-3<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
-            JTD["⋮"]
-            JT200["Request-200 → OS Thread-200<br/>I/O 대기 중 · 스레드 블로킹(멈춤)"]
-            JT201["Request-201<br/>대기 · 빈 스레드 없음"]
-            JT1 ~~~ JT2 ~~~ JT3 ~~~ JTD ~~~ JT200 ~~~ JT201
-        end
-        JDESC["블로킹 중인 스레드는 다른 요청을 처리할 수 없음<br/>스레드당 스택 메모리 ~1MB / 최대 200개 한도"]
-        JCELL ~~~ JDESC
-    end
-
-    subgraph GO["Go 고루틴 G/M/P"]
-        direction TB
-        REQG["Request → 고루틴 G로 유입"]
-        subgraph RUNTIME["Go Runtime"]
-            direction LR
-            subgraph P1["P-1"]
-                direction TB
-                P1G1["G1 · I/O 블로킹"]
-                P1G2["G2 · 실행"]
-                P1M["M-1 (OS Thread)<br/>계속 실행"]
-                P1G1 -. "P가 즉시 G2로 전환" .-> P1G2
-                P1G2 --> P1M
-            end
-            subgraph P2["P-2"]
-                direction TB
-                P2G1["G4 · I/O 블로킹"]
-                P2G2["G5 · 실행"]
-                P2M["M-2 (OS Thread)<br/>계속 실행"]
-                P2G1 -. "P가 즉시 G5로 전환" .-> P2G2
-                P2G2 --> P2M
-            end
-            P1 ~~~ P2
-        end
-        GODESC["G1 블로킹 시 → P-1이 즉시 G2 실행<br/>OS Thread는 블로킹되지 않음<br/>고루틴당 초기 스택 ~2KB / 수십만 동시 실행 가능"]
-        REQG --> RUNTIME
-        RUNTIME ~~~ GODESC
-        GOPAD["&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;<br/>&nbsp;"]
-        GODESC ~~~ GOPAD
-    end
-
-    JAVA ~~~ GO
-
-    classDef javaHead fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
-    classDef javaCell fill:#eef1f4,stroke:#0c2d4e,color:#1a2530
-    classDef goHead fill:#0f6e56,stroke:#04342c,color:#ffffff,font-weight:bold
-    classDef runtimeBox fill:#d7ece4,stroke:#0f6e56,color:#04342c,font-weight:bold
-    classDef pBox fill:#eaf6f1,stroke:#0f6e56,color:#04342c,font-weight:bold
-    classDef descNode fill:none,stroke:none,color:#ffffff
-    classDef blockNode fill:#c0392b,stroke:#7b241c,color:#ffffff,font-weight:bold
-    classDef runNode fill:#27ae60,stroke:#196f3d,color:#ffffff,font-weight:bold
-    classDef waitNode fill:#cbd5e1,stroke:#64748b,color:#1a2530,font-weight:bold
-    classDef reqNode fill:#ffffff,stroke:#0f6e56,color:#04342c
-    classDef invis fill:none,stroke:none,color:#ffffff
-
-    class JAVA javaHead
-    class JCELL javaCell
-    class JT1,JT2,JT3,JT200 blockNode
-    class JTD javaCell
-    class JT201 waitNode
-    class JDESC descNode
-    class GO goHead
-    class RUNTIME runtimeBox
-    class P1,P2 pBox
-    class REQG reqNode
-    class P1G1,P2G1 blockNode
-    class P1G2,P2G2,P1M,P2M runNode
-    class GODESC descNode
-    class GOPAD invis
-```
+![Java 플랫폼 스레드와 Go 고루틴 비교](docs/JavaGoroutine.png)
 
 대규모 전송 환경에서는 Go 고루틴 방식이 구조적으로 유리합니다. 다만 별도 Go 프로세스로 분리하면 프로세스 간 통신 구현이 추가되고, 단일 언어로 통일하는 것이 구현하기에 적합한 난이도라고 봐서 Java를 선택했습니다.
 
 다음과 같이 구현했습니다. Java 에이전트 안에서 `QueueWorker`를 별도 데몬 스레드로 분리했습니다. `setDaemon(true)`로 설정하면 타겟 앱의 일반 스레드가 모두 종료될 때 JVM과 함께 종료됩니다. Advice는 `DataQueue`에 넣기만 하고 `QueueWorker`가 배치로 묶어 Netty 기반 gRPC 채널로 전송합니다. 전송 중에 `QueueWorker` 스레드는 블로킹되지 않습니다.
 
-```mermaid
-flowchart LR
-    subgraph TOMCAT["Tomcat Thread Pool"]
-        direction TB
-        R1["Request-1<br/>Advice<br/>DataQueue.offer"]
-        R2["Request-2<br/>Advice<br/>DataQueue.offer"]
-        RN["Request-N<br/>Advice<br/>DataQueue.offer"]
-    end
-
-    QUEUE[("DataQueue")]
-
-    subgraph DAEMON["QueueWorker"]
-        direction TB
-        DRAIN["drainTo<br/>배치 조립"]
-        SEND["Netty gRPC<br/>비동기 전송"]
-    end
-
-    GATEWAY(["gateway"])
-
-    R1 --> QUEUE
-    R2 --> QUEUE
-    RN --> QUEUE
-    QUEUE --> DRAIN
-    DRAIN --> SEND
-    SEND --> GATEWAY
-
-    classDef tomcatStyle fill:#1d4e89,stroke:#0c2d4e,color:#ffffff,font-weight:bold
-    classDef daemonStyle fill:#0f6e56,stroke:#04342c,color:#ffffff,font-weight:bold
-    classDef queueStyle fill:#fac775,stroke:#854f0b,color:#412402,font-weight:bold
-    classDef gatewayStyle stroke-dasharray: 5 5
-
-    class TOMCAT tomcatStyle
-    class DAEMON daemonStyle
-    class QUEUE queueStyle
-    class GATEWAY gatewayStyle
-```
+![QueueWorker 전송 흐름](docs/queueworker-flow.png)
 
 `QueueWorker`는 `setDaemon(true)`로 등록된 데몬 스레드로 동작합니다. `offer()`는 즉시 반환되어 타겟 앱 스레드를 블로킹하지 않고, 큐가 꽉 차면 드롭되어 타겟 앱에 영향을 주지 않습니다.
 
@@ -405,9 +293,9 @@ flowchart TB
         GW[["gateway<br/>커넥션 전담"]]
         subgraph STREAMS[" "]
             direction TB
-            SM[("stream:metrics")]
-            SS[("stream:spans")]
-            SL[("stream:logs")]
+            SM@{ shape: h-cyl, label: "stream:metrics" }
+            SS@{ shape: h-cyl, label: "stream:spans" }
+            SL@{ shape: h-cyl, label: "stream:logs" }
         end
         CS2[["collectorserver<br/>저장 전담"]]
         DB[("&nbsp;<br/>&nbsp;&nbsp;&nbsp;DB&nbsp;&nbsp;&nbsp;<br/>&nbsp;")]
@@ -486,7 +374,7 @@ flowchart TB
         direction LR
         FA(["agent"])
         FG[["gateway"]]
-        FR[("Redis<br/>바이너리")]
+        FR@{ shape: h-cyl, label: "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Redis · 바이너리&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" }
         FC[["collectorserver<br/>역직렬화"]]
         FCOMMON["common 모듈<br/>Protobuf · gRPC"]
         FA --> FG
@@ -498,7 +386,7 @@ flowchart TB
         direction LR
         LA(["agent"])
         LG[["gateway<br/>역직렬화"]]
-        LR2[("Redis Streams · Map&lt;String,String&gt;<br/>Consumer Group + ACK<br/>AOF 보존")]
+        LR2@{ shape: h-cyl, label: "Redis Streams · Map 객체<br/>Consumer Group + ACK · AOF 보존" }
         LC[["collectorserver<br/>m.get(&quot;cpu_usage&quot;)"]]
         LCOMMON["common 모듈<br/>Protobuf · gRPC"]
         LA --> LG
