@@ -16,7 +16,7 @@
 
 ## 1. 이 프로젝트에 대해
 
-APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 내부가 어떻게 만들어져 있는지에 대한 궁금증은 늘 남아 있었습니다. 도구로 사용만 해왔을 뿐 내부를 알아본 적은 없었습니다. 메서드 실행 시간이 어떻게 측정되는지, 한 요청이 여러 시스템을 거치는 동안 어떻게 추적되는지, 수집한 데이터가 어떤 경로로 화면까지 흘러오는지.
+APM은 장애 원인을 데이터로 짚어주는 유용한 도구지만, 그 내부가 어떻게 만들어져 있는지는 늘 궁금했습니다. 도구로 사용만 해왔을 뿐 내부를 알아본 적은 없었습니다. 메서드 실행 시간이 어떻게 측정되는지, 한 요청이 여러 시스템을 거치는 동안 어떻게 추적되는지, 수집한 데이터가 어떤 경로로 화면까지 흘러오는지.
 
 이 프로젝트는 그 내부를 직접 만들어보면서 이해하려는 시도입니다.
 
@@ -63,7 +63,7 @@ JVM 내부 동작, 바이트코드 조작(Java Instrumentation), OpenTelemetry �
 
 **빠른 둘러보기**
 
-빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 모양을, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 잡을 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [9. 실행 방법](#9-실행-방법)을 보면 됩니다.
+빠르게 둘러보고 싶다면 [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)로 시스템의 구조를, [5. 전체 모듈 구조 요약](#5-전체-모듈-구조-요약)으로 모듈별 책임을 파악할 수 있습니다. 결정 근거가 궁금하다면 [2. 기술 선택과 그 이유](#2-기술-선택과-그-이유)를, 직접 띄워보고 싶다면 [9. 실행 방법](#9-실행-방법)을 보면 됩니다.
 
 [목차로 돌아가기](#목차)
 
@@ -98,7 +98,7 @@ Go는 언어 설계 자체가 경량 고루틴과 채널 기반 동시성을 내
 - Spring WebFlux
 - **Netty** ✓
 
-Spring MVC는 커넥션마다 스레드를 하나씩 점유하는 구조라 에이전트 수가 늘어날수록 스레드를 그만큼 소비한다는 구조적 문제가 있습니다. 개인 프로젝트 규모에서 실제로 스레드 고갈이 나는 상황을 재현하기는 어렵지만 구조적으로 맞지 않다고 판단했습니다. WebFlux도 같은 구조적 문제를 해결하는 방향으로 고려했지만, 에이전트가 100ms 배치로 묶어서 전송하고 Redis Streams가 버퍼를 담당하는 구조에서 WebFlux가 진짜 필요한 규모의 요구사항이 없었습니다. 개인 프로젝트 수준에서 Mono/Flux 기반으로 전환하는 복잡도를 감수할 이유가 없었고, gRPC 서버 자체가 Netty 위에서 동작하는 만큼 필요한 만큼만 직접 구현할 수 있는 Netty를 선택했습니다.
+Spring MVC는 커넥션마다 스레드를 하나씩 점유하는 구조라 에이전트 수가 늘어날수록 스레드를 그만큼 소비한다는 구조적 문제가 있습니다. 개인 프로젝트 규모에서 실제로 스레드 고갈이 나는 상황을 재현하기는 어렵지만 구조적으로 맞지 않다고 판단했습니다. WebFlux도 같은 구조적 문제를 해결하는 방향으로 고려했지만, 에이전트가 100ms 배치로 묶어서 전송하고 Redis Streams가 버퍼를 담당하는 구조에서 WebFlux가 실제로 필요한 규모의 요구사항이 없었습니다. 개인 프로젝트 수준에서 Mono/Flux 기반으로 전환하는 복잡도를 감수할 이유가 없었고, gRPC 서버 자체가 Netty 위에서 동작하는 만큼 필요한 만큼만 직접 구현할 수 있는 Netty를 선택했습니다.
 
 ---
 
@@ -116,7 +116,7 @@ Kafka는 파티셔닝 기반 수평 확장, 컨슈머 그룹별 독립 오프셋
 - InfluxDB
 - **PostgreSQL + TimescaleDB** ✓
 
-Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는 쿼리가 대부분입니다. 시간을 기준으로 데이터를 파티셔닝하고 집계하는 게 핵심인데, 일반 RDB는 이런 시계열 특성에 최적화되어 있지 않아 데이터가 쌓일수록 쿼리 성능이 떨어질 수 있습니다. InfluxDB는 시계열 전용 DB로 이 문제를 잘 해결하지만 Spans, Logs, AI 분석 결과까지 함께 저장해야 하는 상황에서 DB를 여러 개 띄우면 시연이 복잡해져 선택하지 않았습니다. TimescaleDB는 PostgreSQL의 하이퍼테이블 파티셔닝으로 시계열 쿼리 성능을 확보하면서 하나의 DB로 단순화할 수 있어 선택했습니다.
+Metric, Span, Log 데이터는 모두 시간 축으로 쌓이는 시계열 성격을 갖습니다. 특히 Metric의 경우, 구간 평균·최대와 추세를 시간 범위로 집계·회귀하는 조회가 이 프로젝트의 API와 AI 분석에서 반복됩니다. 이를 일반 RDB로 처리하면 데이터가 쌓일수록 전체를 훑게 되어 성능이 떨어질 우려가 있습니다. InfluxDB는 시계열 전용 DB로 이 문제를 잘 해결할 것으로 예상했지만 Spans, Logs, AI 분석 결과까지 함께 저장해야 하는 상황에서 DB를 여러 개 띄우면 시연이 복잡해져 선택하지 않았습니다. TimescaleDB는 PostgreSQL의 하이퍼테이블 파티셔닝으로 시계열 쿼리 성능을 확보하면서 하나의 DB로 단순화할 수 있어 선택했습니다.
 
 ---
 
@@ -125,7 +125,7 @@ Metrics 데이터는 특정 시간 범위의 평균, 최대값, 추세를 묻는
 - Netty + Spring WebFlux
 - **Tomcat + Spring MVC + 스케줄러** ✓
 
-Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다. WebFlux는 써본 경험이 있지만 Mono/Flux 기반으로 모듈 전체를 통일해야 하고, 개인 프로젝트 수준에서 그 복잡도를 감수할 만한 요구사항이 없었습니다. Redis Streams를 주기적으로 폴링하고 DB에 저장하는 단순한 흐름이라 Spring의 `@Scheduled` 스케줄러로 충분하다고 판단했습니다.
+Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다. 후킹한 데이터를 고빈도로 전송해야 하는 에이전트와 게이트웨이 같은 전송 파이프라인에서는 Netty나 WebFlux의 논블로킹 방식이 유리합니다. 반면 수집서버는 전송된 데이터를 받아 가공하고 적재하는 최종 수신 엔드포인트라, 논블로킹 동시성보다 가공·적재 흐름을 따라가기 쉽고 배치 저장 같은 DB 쓰기에 유리한 구조가 더 적합하다고 생각했습니다. WebFlux로 가면 Mono/Flux로 모듈 전체를 통일하고 DB 접근까지 논블로킹으로 맞춰야 하는데, 그만한 비용을 치를 요구사항은 아니라고 판단했습니다. Redis Streams를 주기적으로 폴링해 DB에 저장하는 흐름이라 Spring MVC와 `@Scheduled` 스케줄러로 처리했습니다.
 
 ---
 
@@ -134,7 +134,7 @@ Spring MVC는 I/O 대기 중에도 스레드를 점유한 채로 기다립니다
 - LangChain4j
 - **Spring AI + Ollama** ✓
 
-처음에는 외부 API를 쓰는 방향도 봤는데, 호출마다 비용이 나가고 네트워크 연결이 없으면 시연도 안 되는 게 부담이었습니다. Ollama로 로컬에서 모델을 직접 돌리면 그 문제가 없었고, Spring AI가 모델 교체를 추상화해줘서 나중에 외부 API로 전환해도 코드 변경이 최소화될 것으로 봤습니다. 엔터프라이즈급 AI 파이프라인이 실제로 어떻게 구성되는지는 알지 못하기 때문에 개인 수준에서 무료로 접목할 수 있는 방식으로 구현했고, 그 접목 방식을 직접 설계하고 구현해본 것에 의미를 뒀습니다.
+처음에는 외부 API도 검토했지만, 호출마다 비용이 나가고 네트워크 연결이 없으면 시연도 안 되는 게 부담이었습니다. Ollama로 로컬에서 모델을 직접 돌리면 그 문제가 없었고, Spring AI가 모델 교체를 추상화하므로 나중에 외부 API로 전환해도 코드 변경이 최소화될 것으로 봤습니다. 엔터프라이즈급 AI 파이프라인이 실제로 어떻게 구성되는지는 알지 못하기 때문에 개인 수준에서 무료로 접목할 수 있는 방식으로 구현했고, 그 접목 방식을 직접 설계하고 구현해본 것에 의미를 뒀습니다.
 
 [목차로 돌아가기](#목차)
 
@@ -236,7 +236,7 @@ DataQueue를 처음에 `ArrayBlockingQueue`로 설계하고 구현했던 것처�
 
 DataQueue를 `MpscArrayQueue`로 바꾼 것처럼 큐가 효율적으로 동작하려면 빠른 전송이 뒷받침되어야 한다고 생각했습니다. 큐를 다수 producer·단일 consumer 구조에 맞게 바꿔도, consumer인 worker가 전송에서 막히면 적재부터 전송까지 이어지는 흐름이 느려집니다. BlockingStub과 AsyncStub은 각각 동기·비동기 방식으로 RPC를 호출하는 gRPC의 stub 구현체입니다([gRPC Java 가이드](https://grpc.io/docs/languages/java/basics/)). BlockingStub은 한 배치의 응답이 올 때까지 worker가 대기하므로 큐를 비우는 속도가 응답 여부에 종속됩니다. 적재를 빠르게 만든 만큼 전송도 실시간 소비에 가까운 방식인 AsyncStub으로 바꿨습니다.
 
-AsyncStub은 요청을 보낸 뒤 바로 다음 배치로 넘어가고, 응답은 콜백에서 처리합니다. worker가 응답을 기다리지 않고 다음 요청을 바로 전송하기 때문에, 제한을 두지 않으면 동시 발생 요청이 매우 많아질 때 전송이 끝나지 않은 메시지가 계속 쌓입니다. gRPC 전송에 쓰는 grpc-netty-shaded는 이 메시지 데이터를 Netty의 off-heap(direct memory)에 버퍼링하고([grpc-java #10532](https://github.com/grpc/grpc-java/issues/10532)), 에이전트가 타겟 앱과 같은 프로세스에서 도니 이 off-heap 메모리가 곧 타겟 앱 프로세스의 메모리입니다. 동시 요청이 증식할수록 이 메모리를 크게 점유해 타겟 앱에 영향을 줄 위험이 있어, 동시 요청 수를 제한할 수 있는 [`java.util.concurrent.Semaphore`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/concurrent/Semaphore.html)로 50개까지로 제한했습니다. 요청을 보내기 전에 permit을 얻고 응답 콜백에서 돌려주는 방식이라, 큐가 아무리 커도 동시 요청이 50개를 넘지 않습니다.
+AsyncStub은 요청을 보낸 뒤 바로 다음 배치로 넘어가고, 응답은 콜백에서 처리합니다. worker가 응답을 기다리지 않고 다음 요청을 바로 전송하기 때문에, 제한을 두지 않으면 동시 발생 요청이 매우 많아질 때 전송이 끝나지 않은 메시지가 계속 쌓입니다. gRPC 전송에 쓰는 grpc-netty-shaded는 이 메시지 데이터를 Netty의 off-heap(direct memory)에 버퍼링하고([grpc-java #10532](https://github.com/grpc/grpc-java/issues/10532)), 에이전트가 타겟 앱과 같은 프로세스에서 실행되므로 이 off-heap 메모리는 곧 타겟 앱 프로세스의 메모리이기도 합니다. 동시 요청이 증식할수록 이 메모리를 크게 점유해 타겟 앱에 영향을 줄 위험이 있어, 동시 요청 수를 제한할 수 있는 [`java.util.concurrent.Semaphore`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/concurrent/Semaphore.html)로 50개까지로 제한했습니다. 요청을 보내기 전에 permit을 얻고 응답 콜백에서 돌려주는 방식이라, 큐가 아무리 커도 동시 요청이 50개를 넘지 않습니다.
 
 worker가 gRPC 전송을 통해 큐 데이터를 소비하는 속도를 측정 대상으로 삼았습니다. 비동기 요청의 장점은 한 요청의 응답을 기다리는 동안 다음 요청을 보내는 데서 나오므로, 한 요청이 처리되어 응답이 오기까지의 시간 안에 여러 요청이 앞선 요청의 완료를 기다리지 않고 동시에 나가는 상황을 재현해야만 드러납니다. 실제로 후킹 포인트에서 관측한 데이터는 즉시 동시다발적으로 gateway로 전송되고, 원격에 있는 gateway가 Redis 발행을 거쳐 응답하기까지 시간이 듭니다. 이 상황을 만들기 위해 게이트웨이 대신 응답에 지연을 주는 간단한 임시 gRPC 서버를 두어, 요청 하나가 응답까지 시간이 걸리는 동안 여러 요청이 동시에 진행되는 환경을 구성했습니다. 큐(DataQueue)와 worker(QueueWorker), 비동기 전송(GrpcSenderImpl)은 실제 구현을 그대로 쓰고, 동기 비교군은 같은 경로에서 전송만 BlockingStub으로 바꿨습니다. 응답 지연 시간(Delay Time)을 늘리며 두 방식의 전송 시간을 비교했습니다.
 
@@ -363,7 +363,7 @@ flowchart TD
 
 **[gateway] Protobuf 파싱 경계**
 
-처음 설계는 Protobuf 바이너리를 단순 Redis를 통해 수집서버까지 그대로 가져가는 방식이었습니다. 그런데 그렇게 하면 common 모듈과 gRPC 의존성이 수집서버까지 전파됩니다. 수집서버가 Redis에서 꺼낸 바이너리를 직접 역직렬화해야 하니 구현 복잡도가 올라가는 게 눈에 보였습니다.
+처음 설계는 Protobuf 바이너리를 단순 Redis를 통해 수집서버까지 그대로 가져가는 방식이었습니다. 그러면 common 모듈과 gRPC 의존성이 수집서버까지 전파됩니다. 수집서버가 Redis에서 꺼낸 바이너리를 직접 역직렬화해야 하니 구현 복잡도가 올라갑니다.
 
 게이트웨이는 언제든 늘어날 수 있는 외부 에이전트의 데이터를 빠르게 받는 것이 목적입니다. 반면 게이트웨이 이후 내부 구간에서는 에이전트 수가 동적으로 늘어나더라도 Redis Streams를 통해 수신 속도를 통제하고 확장할 수 있습니다. 또한 수집서버 장애나 재시작으로 인한 데이터 유실을 대비하고자 Consumer Group + ACK 구조로 재처리가 가능하고 AOF로 디스크에도 보존되는 Redis Streams를 택했습니다. 이 구조에서 바이너리를 유지해 전송 효율을 극대화하는 이득보다, 게이트웨이에서 파싱을 끝내 모듈 복잡성을 줄이고 수집서버가 저장 역할에만 집중하게 하는 쪽이 낫다고 판단했습니다.
 
@@ -422,9 +422,11 @@ flowchart TB
 
 **[collectorserver]**
 
-수집서버를 만들 때는 Metrics, Spans, Logs 3종의 raw data가 어떤 모습으로 저장되어야 하는지부터 떠올렸습니다. Metrics는 단일 지표로 원자화되는 형태이고, Spans는 한 요청 안에서 부모-자식 관계로 묶이는 계층 구조이며, Logs는 시간순으로 쌓이는 히스토리 성격입니다. 각 특성에 맞춰 테이블을 만들었습니다. 3종의 raw data를 각자 전용 스트림으로 수집해서 정해진 스키마 형태로 저장하는 것에만 집중하는 모듈로 설계했습니다.
+수집서버를 만들 때는 Metrics, Spans, Logs 3종의 raw data가 어떤 모습으로 저장되어야 하는지부터 떠올렸습니다. Metrics는 단일 지표로 원자화되는 형태이고, Spans는 한 요청 안에서 부모-자식 관계로 묶이는 계층 구조이며, Logs는 시간순으로 쌓이는 히스토리 성격입니다.
 
-테이블 형태가 다르면 저장 로직도 별도의 형태로 나타납니다. 반면 Redis Streams를 빌려 데이터를 꺼내오는 부분은 종류와 무관하게 같은 흐름입니다. Redis를 빌린 수집 부분에서는 공통 코드를 뽑아내고, 저장 로직의 차이는 자바의 Template Method Pattern을 사용해 분리했습니다.
+형태가 다른 만큼 저장 처리도 갈립니다. Metrics와 Logs는 도착한 메시지를 스키마에 맞춰 바로 저장하지만, Spans는 같은 요청의 Span이 모여야 계층이 성립하므로 버퍼에 모았다가 저장합니다. 반면 Redis Streams에서 메시지를 꺼내 오는 수집 흐름은 종류와 무관하게 같습니다. 그래서 공통 수집 골격은 추상 클래스에 두고, 종류별로 다른 저장 처리는 Template Method Pattern으로 구현 클래스가 채우도록 분리했습니다.
+
+- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
 
 ---
 
@@ -434,13 +436,11 @@ flowchart TB
 
 Redis Streams는 새로운 메시지를 끝에 덧붙이기만 할 수 있는 로그 구조이며, 메시지 ACK와 Consumer Group을 기본으로 제공합니다([Redis 공식 — Streams](https://redis.io/docs/latest/develop/data-types/streams/)). Consumer Group이 메시지를 소비하면 PEL(Pending Entry List)에 기록되고, 처리한 결과를 ACK로 보내야 PEL에서 제거됩니다. 처리에 실패하면 ACK 없이 PEL에 남아 다음 폴링에서 다시 시도할 수 있습니다. 수집서버는 DB 저장까지 성공한 뒤에만 ACK를 보내도록 두어 유실 가능성을 차단했습니다.
 
-- [`collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java`](https://github.com/buss-sooin/apm-observatory/blob/main/collectorserver/src/main/java/com/apm/observatory/collectorserver/consumer/AbstractStreamConsumer.java)
-
 ---
 
 **[collectorserver] SpanProcessor**
 
-수집서버의 Metrics와 Logs는 들어온 raw data를 스키마에 맞춰 그대로 저장하면 되지만, Spans는 한 요청 안에서 여러 Span이 부모-자식 관계로 묶이는 계층 구조라 같은 TraceID끼리 모아 처리해야 될 것이라 생각했습니다.
+수집서버의 Metrics와 Logs는 들어온 raw data를 스키마에 맞춰 그대로 저장하면 되지만, Spans는 한 요청 안에서 여러 Span이 부모-자식 관계로 묶이는 계층 구조라 같은 TraceID끼리 모아 처리해야 한다고 생각했습니다.
 
 후킹 범위와 기준은 임의로 정했습니다. 실제 APM이 어떤 구조로 어떻게 흘러가는지 이해가 부족하지만, Span이 계층 구조를 표현할 수 있고 탐지 범위가 명확해지도록 나름의 도식을 잡아 세 지점을 정했습니다. DispatcherServlet을 ROOT로 두고, PreparedStatement는 DB, RestClient는 EXTERNAL로 분류했습니다. 이 세 지점만 후킹하면 한 요청에서 측정되는 건 전체 응답시간(ROOT)과 외부 호출 시간(DB, EXTERNAL)뿐이고, 비즈니스 로직 처리 시간은 어느 후킹에서도 잡히지 않습니다.
 
@@ -1153,7 +1153,7 @@ logback이 `proxy.doAppend(event)`를 호출하면 `InvocationHandler`가 받아
 
 이 구조에서 `AppenderBase.doAppend()`의 원본 동작인 필터 체인 실행과 시작 상태 확인이 우회됩니다. 사이드 이펙트 없이 온전히 구현하려 했다면 이 원본 동작도 함께 구현해줘야 하지만, 이 프로젝트에서는 전송 구현만 담당했습니다.
 
-다른 방식으로 접근할 수 있는지 알아보기 위해 소스코드가 공개된 OpenTelemetry Java agent를 찾아봤는데, "전체 애플리케이션에서 전역으로 접근 가능해야 하는 클래스와 인터페이스"를 별도 bootstrap 모듈로 분리해서 Bootstrap ClassLoader에 올리는 구조로 되어 있었습니다. ([OpenTelemetry Java instrumentation — javaagent-structure.md](https://github.com/open-telemetry/opentelemetry-java-instrumentation/blob/main/docs/contributing/javaagent-structure.md) — "classes and interfaces that must be globally available to the whole application" 단락) 이 구조를 완전히 이해하고 적용하기엔 현재 시점에서 지식이 부족하다고 판단해서 이 프로젝트에서는 적용하지 않았습니다.
+다른 방식으로 접근할 수 있는지 알아보기 위해 소스코드가 공개된 OpenTelemetry Java agent를 살펴보니, "전체 애플리케이션에서 전역으로 접근 가능해야 하는 클래스와 인터페이스"를 별도 bootstrap 모듈로 분리해서 Bootstrap ClassLoader에 올리는 구조로 되어 있었습니다. ([OpenTelemetry Java instrumentation — javaagent-structure.md](https://github.com/open-telemetry/opentelemetry-java-instrumentation/blob/main/docs/contributing/javaagent-structure.md) — "classes and interfaces that must be globally available to the whole application" 단락) 이 구조를 완전히 이해하고 적용하기엔 현재 시점에서 지식이 부족하다고 판단해서 이 프로젝트에서는 적용하지 않았습니다.
 
 `--add-opens java.base/java.lang=ALL-UNNAMED` 옵션은 `defineClass()`를 직접 리플렉션으로 호출할 때 Java 9 이전 환경에서 모듈 시스템 제약을 우회하기 위해 필요합니다. 이 프로젝트는 Java 21에서 `ClassInjector.UsingReflection`을 사용했고 내부적으로 Java 버전별 모듈 제약을 처리해주기 때문에 별도로 추가하지 않았습니다.
 
@@ -1167,6 +1167,20 @@ logback이 `proxy.doAppend(event)`를 호출하면 `InvocationHandler`가 받아
 Byte Buddy `@Advice`는 표시한 메서드를 별개로 호출하지 않고, 후킹 대상 클래스(예: `DispatcherServlet.doDispatch`)의 바이트코드에 본문을 runtime에 그대로 심는 인라인 방식으로 동작합니다. 인라인된 코드 안에서 발생한 예외는 `suppress = Throwable.class` 옵션으로 자동 삽입되는 try-catch에 의해 호출자에게 전파되지 않고 메서드는 정상 종료된 것처럼 보입니다. ([Byte Buddy `Advice.OnMethodEnter` JavaDoc](https://javadoc.io/doc/net.bytebuddy/byte-buddy/latest/net/bytebuddy/asm/Advice.OnMethodEnter.html))
 
 `ServletAdvice`는 초기 구현 단계에서 Span 수집과 Log appender 등록 두 기능이 한 파일 안에 들어 있었고, 이때 `start_time`이 모두 `1970-01-01`로 저장됐습니다. 이후 Log appender의 후킹 지점을 분리하는 리팩토링을 거치면서 새 advice(`AppenderRegistrationAdvice`)에서 같은 문제가 다시 드러났습니다.
+
+appender 등록은 `onEnter` 첫머리에서 static 필드 `appenderRegistered`를 `compareAndSet`으로 검사하는 코드였고, 이 `onEnter`가 `doDispatch`에 그대로 인라인됩니다.
+
+```java
+@Advice.OnMethodEnter(suppress = Throwable.class)
+public static long onEnter() {
+    if (appenderRegistered.compareAndSet(false, true)) {
+        registerGrpcAppender();
+    }
+    String traceId = UUID.randomUUID().toString();
+    MDC.put("trace_id", traceId);
+    return System.currentTimeMillis();
+}
+```
 
 **삽입된 인라인 바이트코드의 문제 되는 부분** (`DispatcherServlet.doDispatch`)
 ```
@@ -1231,12 +1245,12 @@ ClassLoader가 클래스를 찾을 때의 의존성 방향을 고려해, agent�
 ```java
 @Advice.OnMethodExit
 public static void onExit() {
-        if (System.getProperty("apm.appender.registered") == null) {
+    if (System.getProperty("apm.appender.registered") == null) {
         System.setProperty("apm.appender.registered", "true");
         registerGrpcAppender();
         ClassLoaderDiagnostic.run();
-        }
-        }
+    }
+}
 ```
 
 ---
@@ -1248,9 +1262,9 @@ ClassLoader 경계 시각에 매몰되어 있다가 `IllegalAccessError` 에러 
 ```java
 public static final AtomicBoolean appenderRegistered = new AtomicBoolean(false);
 
-        if (appenderRegistered.compareAndSet(false, true)) {
-        registerGrpcAppender();
-        }
+if (appenderRegistered.compareAndSet(false, true)) {
+    registerGrpcAppender();
+}
 ```
 
 - [`agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/advice/mvc/AppenderRegistrationAdvice.java)
@@ -1285,28 +1299,6 @@ PlatformClassLoader: PlatformClassLoader
 ```
 
 - [`agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java`](https://github.com/buss-sooin/apm-observatory/blob/main/agent/src/main/java/com/apm/observatory/agent/diagnostic/ClassLoaderDiagnostic.java)
-
----
-
-**그 외 해결한 문제들**
-
-| 번호 | 문제 | 원인 | 해결 |
-|---|---|---|---|
-| ① | shadowJar Java 21 호환 오류 | 구버전 플러그인이 Java 21 클래스 처리 불가 | com.gradleup.shadow 8.3.5로 교체 |
-| ③ | logback.xml ClassNotFoundException | LaunchedClassLoader가 agent JAR 클래스 접근 불가 | premain 대신 첫 요청 시점 리플렉션 등록 (최종 ② 방식으로 해결) |
-| ④ | JPA 집계 함수 자동 완성 명명 미지원 | JPA 자동 완성 명명은 단순 조회에만 적용 | @Query + JPQL로 직접 작성 |
-| ⑤ | null 언박싱 NPE (AVG 결과) | 집계 함수 결과 null 가능 | Optional.ofNullable().orElse(0.0) 적용 |
-| ⑥ | Redis MKSTREAM 미지원 | Spring Data Redis createGroup()이 MKSTREAM 파라미터 미지원 | RedisCallback으로 직접 실행 |
-| ⑦ | app_name 빈값 (spans) | AgentContext에 getAppName() 누락 | AgentContext.getAppName(), getHost() 추가 |
-| ⑧ | app_name = 'jar' 반환 | resolveAppName()이 JAR 파일명 그대로 반환 | 버전 제거 로직 추가, -Dapm.app.name 명시 권장 |
-| ⑨ | Ollama 모델 유실 | 볼륨 초기화 시 ollama_data 포함 | 볼륨 초기화 시 ollama_data 제외 |
-| ⑩ | Ollama JSON 파싱 실패 | 메모리 부족 응답 잘림, 필드 타입 불일치 | num-predict 제한, 프롬프트 명시, @JsonProperty 추가 |
-| ⑪ | span_type VARCHAR(20) 초과 | 컬럼 크기 부족 | VARCHAR(100)으로 변경, 프롬프트에 단일 값 선택 지시 |
-| ⑫ | 타임존 문제 | 컨테이너 TZ 미설정 | docker-compose.yml TZ: Asia/Seoul, -Duser.timezone 추가 |
-| ⑭ | Span 트리 미성립 | DB/EXTERNAL Span의 parent_span_id가 traceId로 저장 | ServletAdvice에서 spanId MDC 저장, 자식 Span MDC["span_id"] 참조 |
-| ⑮ | Hibernate TIMESTAMPTZ 오류 | Hibernate 6.6과 설정 비호환 | application.yml에서 timezone.default_storage 제거 |
-| ⑯ | FrameworkServlet 후킹 IllegalAccessError | Advice 인라인 시 private 메서드 접근 불가 | registerGrpcAppender() public으로 변경 |
-| ⑰ | TomcatEmbeddedWebappClassLoader 주입 실패 | getContextClassLoader()가 실제 logback ClassLoader가 아님 | LoggerFactory.getILoggerFactory()로 실제 ClassLoader 역추적 |
 
 [목차로 돌아가기](#목차)
 
