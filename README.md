@@ -602,7 +602,7 @@ enum DetectionStatus {
 <a id="status-formula"></a>
 **status 결정 수식**
 
-각 측정 요소의 enum 값은 정해진 수식으로 결정됩니다. 이동 평균으로 노이즈를 제거하고 평소 대비 임계 배수를 넘는지를 보는 식이 기본 구조이며, 점진 상승 판정만 시간 축 기울기를 추가로 봅니다. 수식에 등장하는 측정 구간과 기준 구간의 주기/길이는 [AI 분석 흐름의 구간 변수 단락](#interval-vars)에서 다룹니다.
+각 측정 요소의 enum 값은 정해진 수식으로 결정됩니다. 구간 평균으로 노이즈를 제거하고 평소 대비 임계 배수를 넘는지를 보는 식이 기본 구조이며, 점진 상승 판정만 시간 축 기울기를 추가로 봅니다. 수식에 등장하는 측정 구간과 기준 구간의 주기/길이는 [AI 분석 흐름의 구간 변수 단락](#interval-vars)에서 다룹니다.
 
 **자원 급등 (`ResourceStatus = SPIKED`, Collapse용)**
 ```
@@ -1389,7 +1389,7 @@ spikeMultiplier      SPIKE_MULTIPLIER 상수        →  3.0
 
 **같은 절차를 적용한 다른 클래스**
 
-- `PerformanceErosionEvaluator` — 이동 평균과 선형 회귀 기울기로 점진적 상승을 판정. 8개 테스트.
+- `PerformanceErosionEvaluator` — 선형 회귀 기울기로 점진적 상승을 판정. 8개 테스트.
 - `ExternalImpactEvaluator` — 앱 자원이 정상인 상태에서 외부 호출만 평소 대비 늘어난 패턴을 판정. 10개 테스트.
 - `PerformanceTrend.isExpired()` — 30분 누적 윈도우의 만료 시점 판정. 3개 테스트.
 
