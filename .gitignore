@@ -4,6 +4,10 @@ build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 *.log
+/docs/backup/
+
+### GitHub Wiki (별도 저장소 클론 — 원본은 /docs/wiki/) ###
+/apm-observatory.wiki/
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
