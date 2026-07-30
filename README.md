@@ -1,14 +1,12 @@
 # apm-observatory
 
-Java 애플리케이션의 관측 데이터를 수집하고 조회하는 APM 백엔드를, 상용 도구를 쓰지 않고 직접 만들어본 프로젝트입니다.
-
 ## 목차
 
 - [1. 이 프로젝트에 대해](#1-이-프로젝트에-대해)
 - [2. 기술 스택](#2-기술-스택)
 - [3. 전체 구조 한눈에 보기](#3-전체-구조-한눈에-보기)
 - [4. 모듈 구조 요약](#4-모듈-구조-요약)
-- [5. 더 자세히 보기](#5-더-자세히-보기)
+- [5. 더 자세히 보기](#5-더-자세히-보기) &nbsp;&nbsp;([위키 바로가기](https://github.com/buss-sooin/apm-observatory/wiki))
 
 ---
 
@@ -80,15 +78,15 @@ apm-observatory/
 └── README.md
 ```
 
-| 모듈 | 역할 | 설계 상세 |
+| 모듈 | 역할 | 상세 |
 |---|---|---|
-| agent | 타겟 앱 JVM에 `-javaagent`로 붙어 Metrics / Traces / Logs 수집 후 gRPC 전송 | [모듈 설계 · agent](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-agent) |
+| agent | 바이트코드 조작으로 Metrics / Traces / Logs 수집 | [모듈 설계 · agent](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-agent) |
 | gateway | gRPC 수신, API Key 인증, Redis Streams 라우팅 | [모듈 설계 · gateway](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-gateway) |
-| collectorserver | Redis Streams 소비, 가공 후 TimescaleDB 저장 | [모듈 설계 · collectorserver](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-collectorserver) |
-| aipipeline | 룰 기반 이상 감지, AI 자연어 분석 및 권고 생성 | [모듈 설계 · aipipeline](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-aipipeline) |
-| apiserver | JWT 인증, 조회 REST API 제공 | [모듈 설계 · apiserver](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-apiserver) |
-| targetappmvc | 에이전트 후킹 대상 샘플 애플리케이션. Spring MVC + MySQL로 구성되며 DB 쿼리와 외부 API 호출을 동시에 발생시키는 `/combined` 엔드포인트로 시연합니다 | [`TestController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java) |
-| common | agent와 gateway가 공유해야 하는 계약이라 별도 모듈로 분리한 gRPC Protobuf 정의 | [`monitoring.proto`](https://github.com/buss-sooin/apm-observatory/blob/main/common/src/main/proto/monitoring.proto) |
+| collectorserver | Redis Streams 소비, TimescaleDB 저장 | [모듈 설계 · collectorserver](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-collectorserver) |
+| aipipeline | 룰 기반 이상 감지, AI 자연어 분석 및 권고 | [모듈 설계 · aipipeline](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-aipipeline) |
+| apiserver | JWT 인증, REST API 제공 | [모듈 설계 · apiserver](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-apiserver) |
+| targetappmvc | 에이전트 후킹 대상 샘플 애플리케이션 | DB 쿼리와 외부 API 호출을 동시에 발생시켜 시연에 쓰는 `/combined` 엔드포인트 소스가 [`TestController.java`](https://github.com/buss-sooin/apm-observatory/blob/main/targetappmvc/src/main/java/com/apm/observatory/targetappmvc/controller/TestController.java)입니다 |
+| common | gRPC Protobuf 정의 공유 모듈 | agent와 gateway가 주고받는 메시지 타입을 정의한 소스가 [`monitoring.proto`](https://github.com/buss-sooin/apm-observatory/blob/main/common/src/main/proto/monitoring.proto)입니다 |
 
 모듈 전체에 공통으로 적용한 패키지 구조와 경계 설계는 위키의 [공통 설계 결정](https://github.com/buss-sooin/apm-observatory/wiki/공통-설계-결정)에 있습니다.
 
@@ -98,15 +96,15 @@ apm-observatory/
 
 ## 5. 더 자세히 보기
 
-이 README는 프로젝트를 한눈에 파악하는 데 필요한 만큼만 담았습니다. 설계 근거, 구현 세부사항, 실행 절차는 [위키](https://github.com/buss-sooin/apm-observatory/wiki)에 나눠 정리했습니다.
+이 README는 프로젝트의 간단한 소개만을 담았습니다. 설계 근거, 구현 세부사항, 실행 절차는 [위키](https://github.com/buss-sooin/apm-observatory/wiki)에 나눠 정리했습니다.
 
 | 위키 페이지 | 내용 |
 |---|---|
 | [실행 방법](https://github.com/buss-sooin/apm-observatory/wiki/실행-방법) | Docker Compose로 직접 띄워 수집부터 조회까지 확인하는 절차와 시연 시나리오 |
-| [기술 선택과 그 이유](https://github.com/buss-sooin/apm-observatory/wiki/기술-선택과-그-이유) | 구성요소별 후보 비교와 선택 기준 |
+| [기술 선택과 그 이유](https://github.com/buss-sooin/apm-observatory/wiki/기술-선택과-그-이유) | 사용 기술 스택 후보와 선택 기준 |
 | [데이터 흐름과 코드 경로](https://github.com/buss-sooin/apm-observatory/wiki/데이터-흐름과-코드-경로) | Metrics / Traces / Logs / AI 분석 네 갈래를 클래스 단위로 추적 |
-| [모듈별 설계](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-agent) | 모듈마다 무엇을 고민하고 어떻게 구현했는지 |
-| [어려웠던 문제와 해결 과정](https://github.com/buss-sooin/apm-observatory/wiki/어려웠던-문제와-해결-과정) | ClassLoader 위임 문제 등 원인 추적과 해결 기록 |
-| [테스트 전략](https://github.com/buss-sooin/apm-observatory/wiki/테스트-전략) | 무엇을 어디까지 검증했는지 |
+| [모듈별 설계](https://github.com/buss-sooin/apm-observatory/wiki/모듈-설계-agent) | 모듈 설계 시 기술적 트레이드오프와 중점 |
+| [어려웠던 문제와 해결 과정](https://github.com/buss-sooin/apm-observatory/wiki/어려웠던-문제와-해결-과정) | 프로젝트 제작 진행 중 가장 고민하고 어려웠던 문제의 해결 기록 |
+| [테스트 전략](https://github.com/buss-sooin/apm-observatory/wiki/테스트-전략) | 테스트 작성 대상 기준과 TDD 적용 절차 |
 
 [목차로 돌아가기](#목차)
